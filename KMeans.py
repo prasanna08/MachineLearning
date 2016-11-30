@@ -13,7 +13,7 @@ class KMeans(object):
 
 	def calculate_cluster_distances(self):
 		for i in range(self.num_clusters):
-			self.cluster_dist[i] = np.sum(self.inputs - self.clusters[i], axis=1)
+			self.cluster_dist[i] = np.sqrt(np.sum((self.inputs - self.clusters[i])**2, axis=1))
 
 	def assign_data_points(self):
 		new_clusters = np.zeros(self.clusters.shape)
