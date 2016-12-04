@@ -33,6 +33,8 @@ class KMeans(object):
 			new_clusters_norm = np.linalg.norm(self.clusters, axis=1)
 
 			if np.isnan(self.clusters).any() == True:
+				# If one of the clusters is stuck at nan then start whole
+				# process again from begining.
 				self.clusters = self.inputs[np.random.choice(
 					self.test_cases, self.num_clusters, replace=False), :]
 			elif (old_clusters_norm == new_clusters_norm).all() == True:
