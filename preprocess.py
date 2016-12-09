@@ -15,3 +15,5 @@ def get_output_array_from_labels(output_labels, labels_encoding=None):
 		indices = np.where(output_labels == enc[0])
 		outputs[indices[0]] = enc[1:]
 	return outputs
+
+labeling = get_output_array_from_labels
