@@ -7,7 +7,40 @@ class NeuralNet(object):
 	def __init__(
 			self, train_inputs, train_outputs, hidden_layers, validation_inputs,
 			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
-			method=BATCH_LEARNING, mini_batch_size=None):
+			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid'):
+		"""NeuralNet class is used to create neural network classifier.
+
+		Args:
+			train_inputs: numpy array. This is array containing inputs to the
+				neural network of size (n_samples, n_features).
+			train_outputs: numpy array. This is array containg expected outputs
+				of neural network of size (n_samples, n_classes). In case of
+				regression problem n_class is 1. In classification problem
+				n_class is total number of classes.
+			hidden_layers: list. This list contains number of neurons in hidden
+				layer. These are between input layer and output layer. For e.g. if
+				this list is [20, 30] then architecture of entire network is
+				n_features -> 20 -> 30 -> n_classes.
+			validation_inputs: numpy array. This array consists of validation
+				inputs of size (n_validation, n_features). n_validation is size
+				of number validaion cases.
+			validation_outputs: numpy array. This array consists of validation
+				outputs of size (n_validation, n_classes).
+			eta: float. This value is learning rate parameter of network.
+			momentum: float. Momentum rate of network.
+			early_stopping: boolean. If enabled, network uses validation set to determine
+				when to stop learning.
+			method: str. This specified learning method used by network. It can
+				be 'batch', 'stochastic' or 'mini_batch' learning method.
+				'batch' referes to batch learning of gradient decent.
+				'stochastic' referes to stochastic gradient decent (SGD).
+				'mini_batch' is variation of SGD and is in middle of batch
+				gradient decent and	purely SGD.
+			mini_batch_size: int. This must be specified when using 'mini_batch'
+				learning method.
+			outtype: str. This specifies what function to use in activation of
+				output neurons. As of now it support 'sigmoid' only.
+		"""
 		# Prepare train_data.
 		self.inputs = np.array(train_inputs)
 		if self.inputs.ndim == 1:
@@ -34,6 +67,7 @@ class NeuralNet(object):
 		self.eta = eta
 		self.momentum = momentum
 		self.early_stopping = early_stopping
+		self.outtype = outtype
 
 		self.learning_method = method
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
@@ -46,7 +80,7 @@ class NeuralNet(object):
 		self.neural_layers = np.concatenate(
 			[self.input_neurons, self.hidden_layers, self.output_neurons])
 		self.num_layers = self.neural_layers.shape[0]
-		self.theta = [np.random.rand(self.neural_layers[i+1], self.neural_layers[i]+1)
+		self.theta = [np.random.normal(0.0, 1.0, (self.neural_layers[i+1], self.neural_layers[i]+1))
 			for i in np.arange(self.num_layers-1)]
 		self.old_updates = [np.zeros((self.neural_layers[i+1], self.neural_layers[i]+1))
 			for i in np.arange(self.num_layers-1)]
@@ -69,7 +103,14 @@ class NeuralNet(object):
 		return (1/(1+np.exp(-z)))
 
 	def grad(self, z):
-		return self.sigmoid(z)*(1-self.sigmoid(z))
+		sigm = self.sigmoid(z)
+		return sigm*(1-sigm)
+
+	def calculate_softmax_output(self, z):
+		if z.shape[0] > 1:
+			return np.exp(z) / np.sum(np.exp(z), axis=1).reshape(z.shape[0], 1)
+		else:
+			return np.exp(z) / np.sum(np.exp(z))
 
 	def calculate_error(self, target, output):
 		return np.sum(-(target*np.log(output) + (1-target)*np.log(1-output)))/target.shape[0]
@@ -134,10 +175,10 @@ class NeuralNet(object):
 	def _perform_stochastic_iteration(self):
 		error = 0
 		self._shuffle()
-		#for i in range(self.test_cases):
-		self._perform_single_iter(self.inputs[0], self.outputs[0])
-		error = self.calculate_error(self.outputs[0], self.sig_activation[-1])
-		return error #/ self.test_cases
+		for i in range(self.test_cases):
+			self._perform_single_iter(self.inputs[i], self.outputs[i])
+			error += self.calculate_error(self.outputs[i], self.sig_activation[-1])
+		return error / self.test_cases
 
 	def _perform_single_learning_iter(self):
 		if self.learning_method == self.BATCH_LEARNING:
@@ -154,7 +195,7 @@ class NeuralNet(object):
 			inputs = self.sigmoid(np.dot(inputs, self.theta[i].T))
 		return inputs
 
-	def train(self, max_epoch=None):
+	def train(self, show_validation_error=True, max_epoch=None, report_back_at=100):
 		old_validation_error1 = 10003
 		old_validation_error2 = 10002
 		validation_error = 10001
@@ -165,8 +206,14 @@ class NeuralNet(object):
 			while max_epoch >= epoch:
 				error = self._perform_single_learning_iter()
 				epoch += 1
-				if (epoch % 100) == 0:
+				if (epoch % report_back_at) == 0:
 					print "E(train, %d epoch) = %f" % (epoch, error)
+					if show_validation_error:
+						# check validation error.
+						validation_test = self.get_outputs(self.validation_inputs)
+						validation_error = self.calculate_error(
+						self.validation_outputs, validation_test)
+						print "E(validation) = %f" % validation_error
 
 		elif self.early_stopping:
 			while ((old_validation_error2 - old_validation_error1) > 0.001 or 
@@ -180,4 +227,6 @@ class NeuralNet(object):
 				validation_error = self.calculate_error(
 					self.validation_outputs, validation_test)
 			print "E(validation) = %f, E(train) = %f" % (validation_error,  error)
-
+		else:
+			print ("Unknown stopping method. Please set early_stopping to True"
+				"provide epoch count while train()")
