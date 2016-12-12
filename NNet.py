@@ -122,7 +122,7 @@ class NeuralNet(object):
 		self.outputs = self.outputs[order, :]
 
 	def _forward_prop(self, inputs):
-		self.activation[0] = inputs
+		self.sig_activation[0] = inputs
 		# Forward propagation.
 		for i in range(self.num_layers - 1):
 			layer_input = np.concatenate(
@@ -142,7 +142,8 @@ class NeuralNet(object):
 				self.delta[i].T, np.concatenate(
 					[np.ones((self.inputs_per_batch,1)), self.sig_activation[i-1]], axis=1))
 			diff = (self.eta * diff) / self.inputs_per_batch
-			self.theta[i-1] -= (diff + self.momentum*self.old_updates[i-1])
+			diff = diff + self.momentum*self.old_updates[i-1]
+			self.theta[i-1] -= (diff)
 			self.old_updates[i-1] = diff
 
 	def _perform_single_iter(self, inputs, outputs):
@@ -176,8 +177,10 @@ class NeuralNet(object):
 		error = 0
 		self._shuffle()
 		for i in range(self.test_cases):
-			self._perform_single_iter(self.inputs[i], self.outputs[i])
-			error += self.calculate_error(self.outputs[i], self.sig_activation[-1])
+			ins = self.inputs[i].reshape(1, self.inputs.shape[1])
+			outs = self.outputs[i].reshape(1, self.outputs.shape[1])
+			self._perform_single_iter(ins, outs)
+			error += self.calculate_error(outs, self.sig_activation[-1])
 		return error / self.test_cases
 
 	def _perform_single_learning_iter(self):
@@ -216,8 +219,8 @@ class NeuralNet(object):
 						print "E(validation) = %f" % validation_error
 
 		elif self.early_stopping:
-			while ((old_validation_error2 - old_validation_error1) > 0.001 or 
-					(old_validation_error1 - validation_error) > 0.001):
+			while ((old_validation_error2 - old_validation_error1) > 0.0001 or 
+					(old_validation_error1 - validation_error) > 0.0001):
 				error = self._perform_single_learning_iter()
 
 				old_validation_error2 = old_validation_error1
