@@ -8,7 +8,7 @@ class NeuralNet(object):
 			self, train_inputs, train_outputs, hidden_layers, validation_inputs,
 			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
 			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid',
-			cost_func='log'):
+			cost_func='log', nesterov_momentum=True):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -41,6 +41,11 @@ class NeuralNet(object):
 				learning method.
 			outtype: str. This specifies what function to use in activation of
 				output neurons. As of now it support 'sigmoid' only.
+			cost_func: str. This tells which cost function to use. Possibel
+				choices are 'mse' (Mean Squared Error) and 'log' (or Cross
+				Entropy) error function.
+			nesterov_momentum: bool. This specified whether to use nesterov's
+				momentum or continuous momentum.
 		"""
 		# Prepare train_data.
 		self.inputs = np.array(train_inputs)
@@ -70,6 +75,7 @@ class NeuralNet(object):
 		self.early_stopping = early_stopping
 		self.outtype = outtype
 		self.cost_func = cost_func
+		self.nesterov_momentum = nesterov_momentum
 
 		self.learning_method = method
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
@@ -176,11 +182,15 @@ class NeuralNet(object):
 
 	def _update_theta(self):
 		for i in range(self.num_layers-1, 0, -1):
-			diff = np.dot(
+			grad = np.dot(
 				self.delta[i].T, np.concatenate(
 					[np.ones((self.inputs_per_batch,1)), self.sig_activation[i-1]], axis=1))
-			diff = (self.eta * diff) / self.inputs_per_batch
-			diff = diff + self.momentum*self.old_updates[i-1]
+			scaled_grad = (self.eta * diff) / self.inputs_per_batch
+			diff = self.momentum * self.old_updates[i-1] - scaled_grad
+
+			if self.nesterov_momentum:
+				diff = self.momentum * diff - scaled_grads
+
 			self.theta[i-1] -= diff
 			self.old_updates[i-1] = diff
 
