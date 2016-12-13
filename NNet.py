@@ -7,7 +7,8 @@ class NeuralNet(object):
 	def __init__(
 			self, train_inputs, train_outputs, hidden_layers, validation_inputs,
 			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
-			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid'):
+			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid',
+			cost_func='log'):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -68,6 +69,7 @@ class NeuralNet(object):
 		self.momentum = momentum
 		self.early_stopping = early_stopping
 		self.outtype = outtype
+		self.cost_func = cost_func
 
 		self.learning_method = method
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
@@ -102,18 +104,52 @@ class NeuralNet(object):
 	def sigmoid(self, z):
 		return (1/(1+np.exp(-z)))
 
-	def grad(self, z):
+	def sigmoid_grad(self, z):
 		sigm = self.sigmoid(z)
 		return sigm*(1-sigm)
 
-	def calculate_softmax_output(self, z):
+	def softmax(self, z):
 		if z.shape[0] > 1:
 			return np.exp(z) / np.sum(np.exp(z), axis=1).reshape(z.shape[0], 1)
 		else:
 			return np.exp(z) / np.sum(np.exp(z))
 
+	def softmax_delta(self, target, z):
+		delk = np.zeros(z.shape)
+		delta = np.zeros(z.shape)
+		for i in range(delta.shape[1]):
+			delk[:, i] = 1
+			delta[:, i] = np.sum((z - target) * z * (delk - z[:, i].reshape(z.shape[0],1)), axis=1)
+			delk[:, i] = 0
+		return delta
+
 	def calculate_error(self, target, output):
-		return np.sum(-(target*np.log(output) + (1-target)*np.log(1-output)))/target.shape[0]
+		if self.cost_func == 'log':
+			return np.sum(-(target * np.log(output) + (1 - target) * np.log(1 - output))) / target.shape[0]
+		elif self.cost_func == 'mse':
+			return np.sum((output - target) ** 2)/(2 * output.shape[0])
+		else:
+			raise Exception("Unknown cost function supplied. Please set it to "
+				"mse or log.")
+
+	def calculate_output(self, outputs):
+		if self.outtype == 'sigmoid':
+			return self.sigmoid(outputs)
+		elif self.outtype == 'softmax':
+			return self.softmax(outputs)
+		else:
+			raise Exception("Unknow output activation function.")
+
+	def calculate_output_delta(self, target, outputs):
+		if self.cost_func == 'log':
+			return (outputs - target)
+		elif self.cost_func == 'mse':
+			if self.outtype == 'sigmoid':
+				return (outputs - target) * outputs * (1 - outputs)
+			elif self.outtype == 'softmax':
+				return self.softmax_delta(target, outputs)
+			else:
+				raise Exception("Unknown output activation function.")
 
 	def _shuffle(self):
 		order = range(self.inputs.shape[0])
@@ -122,19 +158,21 @@ class NeuralNet(object):
 		self.outputs = self.outputs[order, :]
 
 	def _forward_prop(self, inputs):
-		self.sig_activation[0] = inputs
-		# Forward propagation.
 		for i in range(self.num_layers - 1):
+			self.sig_activation[i] = (
+				inputs if i==0 else self.sigmoid(self.activation[i]))
 			layer_input = np.concatenate(
 				[np.ones((self.inputs_per_batch,1)), self.sig_activation[i]], axis=1)
 			self.activation[i+1] = np.dot(layer_input, self.theta[i].T)
-			self.sig_activation[i+1] = self.sigmoid(self.activation[i+1])
+
+		self.sig_activation[-1] = self.calculate_output(self.activation[-1])
 
 	def _back_prop(self, outputs):
-		self.delta[self.num_layers-1] = (self.sig_activation[-1] - outputs)
+		self.delta[-1] = self.calculate_output_delta(outputs, self.sig_activation[-1])
+
 		for i in range(self.num_layers-1, 1, -1):
 			self.delta[i-1] = (
-				np.dot(self.delta[i], self.theta[i-1])[:, 1:]) * self.grad(self.activation[i-1])
+				np.dot(self.delta[i], self.theta[i-1])[:, 1:]) * self.sig_activation[i-1] * (1 - self.sig_activation[i-1])
 
 	def _update_theta(self):
 		for i in range(self.num_layers-1, 0, -1):
@@ -143,7 +181,7 @@ class NeuralNet(object):
 					[np.ones((self.inputs_per_batch,1)), self.sig_activation[i-1]], axis=1))
 			diff = (self.eta * diff) / self.inputs_per_batch
 			diff = diff + self.momentum*self.old_updates[i-1]
-			self.theta[i-1] -= (diff)
+			self.theta[i-1] -= diff
 			self.old_updates[i-1] = diff
 
 	def _perform_single_iter(self, inputs, outputs):
@@ -190,13 +228,17 @@ class NeuralNet(object):
 			return self._perform_single_mini_batch_iteration()
 		elif self.learning_method == self.STOCHASTIC_LEARNING:
 			return self._perform_stochastic_iteration()
+		else:
+			raise Exception("Unknown learning method. Please set learning "
+				"to batch, mini_batch ot stochastic.")
 
 	def get_outputs(self, inputs):
 		for i in range(self.num_layers - 1):
+			inputs = inputs if i==0 else self.sigmoid(activations)
 			inputs = np.concatenate(
 				[np.ones((inputs.shape[0],1)), inputs], axis=1)
-			inputs = self.sigmoid(np.dot(inputs, self.theta[i].T))
-		return inputs
+			activations = np.dot(inputs, self.theta[i].T)
+		return self.calculate_output(activations)
 
 	def train(self, show_validation_error=True, max_epoch=None, report_back_at=100):
 		old_validation_error1 = 10003
@@ -209,27 +251,28 @@ class NeuralNet(object):
 			while max_epoch >= epoch:
 				error = self._perform_single_learning_iter()
 				epoch += 1
+
 				if (epoch % report_back_at) == 0:
 					print "E(train, %d epoch) = %f" % (epoch, error)
+
 					if show_validation_error:
-						# check validation error.
 						validation_test = self.get_outputs(self.validation_inputs)
 						validation_error = self.calculate_error(
-						self.validation_outputs, validation_test)
+							self.validation_outputs, validation_test)
 						print "E(validation) = %f" % validation_error
 
 		elif self.early_stopping:
 			while ((old_validation_error2 - old_validation_error1) > 0.0001 or 
 					(old_validation_error1 - validation_error) > 0.0001):
 				error = self._perform_single_learning_iter()
-
 				old_validation_error2 = old_validation_error1
 				old_validation_error1 = validation_error
-				# check validation error.
+
 				validation_test = self.get_outputs(self.validation_inputs)
 				validation_error = self.calculate_error(
 					self.validation_outputs, validation_test)
 			print "E(validation) = %f, E(train) = %f" % (validation_error,  error)
+
 		else:
-			print ("Unknown stopping method. Please set early_stopping to True"
-				"provide epoch count while train()")
+			print ("Unknown learning stopping method. Please set early_stopping "
+				"to True, or provide epoch count while train()")
