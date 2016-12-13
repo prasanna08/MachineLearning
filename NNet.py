@@ -8,7 +8,8 @@ class NeuralNet(object):
 			self, train_inputs, train_outputs, hidden_layers, validation_inputs,
 			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
 			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid',
-			cost_func='log', nesterov_momentum=True):
+			cost_func='log', nesterov_momentum=True, regularization=True,
+			regularization_param=1.0):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -46,6 +47,10 @@ class NeuralNet(object):
 				Entropy) error function.
 			nesterov_momentum: bool. This specified whether to use nesterov's
 				momentum or continuous momentum.
+			regularization: bool. This specified whether to use regularization
+				or not. L2 regularization is used if this is True.
+			regularization_param: float. This is regularization parameter used
+				for penalty calculation and weights update.
 		"""
 		# Prepare train_data.
 		self.inputs = np.array(train_inputs)
@@ -76,8 +81,10 @@ class NeuralNet(object):
 		self.outtype = outtype
 		self.cost_func = cost_func
 		self.nesterov_momentum = nesterov_momentum
-
+		self.regularization = regularization
+		self.regularization_param = regularization_param
 		self.learning_method = method
+
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
 				mini_batch_size == None):
 			raise Exception(
@@ -129,14 +136,26 @@ class NeuralNet(object):
 			delk[:, i] = 0
 		return delta
 
+	def calculate_regularization_penalty(self):
+		penalty = 0
+		for t in self.theta:
+			penalty += (self.regularization_param * np.sum(t[:, 1:]**2) / (2 * self.inputs_per_batch))
+		return penalty
+
 	def calculate_error(self, target, output):
+		reg_penalty = 0
+		cost = 0
+		if self.regularization == True:
+			reg_penalty = self.calculate_regularization_penalty()
+
 		if self.cost_func == 'log':
-			return np.sum(-(target * np.log(output) + (1 - target) * np.log(1 - output))) / target.shape[0]
+			cost = np.sum(-(target * np.log(output) + (1 - target) * np.log(1 - output))) / target.shape[0]
 		elif self.cost_func == 'mse':
-			return np.sum((output - target) ** 2)/(2 * output.shape[0])
+			cost = np.sum((output - target) ** 2)/(2 * output.shape[0])
 		else:
 			raise Exception("Unknown cost function supplied. Please set it to "
 				"mse or log.")
+		return cost + reg_penalty
 
 	def calculate_output(self, outputs):
 		if self.outtype == 'sigmoid':
@@ -185,14 +204,20 @@ class NeuralNet(object):
 			grad = np.dot(
 				self.delta[i].T, np.concatenate(
 					[np.ones((self.inputs_per_batch,1)), self.sig_activation[i-1]], axis=1))
-			scaled_grad = (self.eta * diff) / self.inputs_per_batch
-			diff = self.momentum * self.old_updates[i-1] - scaled_grad
+			grad = (self.eta * grad) / self.inputs_per_batch
+
+			if self.regularization:
+				t = np.zeros(self.theta[i-1].shape)
+				t[:, 1:] = self.theta[i-1][:, 1:]
+				grad += (self.regularization_param * t / self.inputs_per_batch)
+
+			diff = self.momentum * self.old_updates[i-1] - grad
+			self.old_updates[i-1] = diff
 
 			if self.nesterov_momentum:
-				diff = self.momentum * diff - scaled_grads
+				diff = self.momentum * diff - grad
 
-			self.theta[i-1] -= diff
-			self.old_updates[i-1] = diff
+			self.theta[i-1] += diff
 
 	def _perform_single_iter(self, inputs, outputs):
 		self._forward_prop(inputs)
