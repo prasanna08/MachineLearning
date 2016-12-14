@@ -285,8 +285,6 @@ class NeuralNet(object):
 			epoch = 1
 			while max_epoch >= epoch:
 				error = self._perform_single_learning_iter()
-				epoch += 1
-
 				if (epoch % report_back_at) == 0:
 					print "E(train, %d epoch) = %f" % (epoch, error)
 
@@ -295,6 +293,7 @@ class NeuralNet(object):
 						validation_error = self.calculate_error(
 							self.validation_outputs, validation_test)
 						print "E(validation) = %f" % validation_error
+				epoch += 1
 
 		elif self.early_stopping:
 			while ((old_validation_error2 - old_validation_error1) > 0.0001 or 
