@@ -9,7 +9,7 @@ class NeuralNet(object):
 			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
 			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid',
 			cost_func='log', nesterov_momentum=True, regularization=True,
-			regularization_param=1.0):
+			regularization_param=1.0, lr_decay=0.0):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -54,22 +54,12 @@ class NeuralNet(object):
 		"""
 		# Prepare train_data.
 		self.inputs = np.array(train_inputs)
-		if self.inputs.ndim == 1:
-			self.inputs = self.inputs.reshape(self.inputs.shape[0],1)
 		self.outputs = np.array(train_outputs)
-		if self.outputs.ndim == 1:
-			self.outputs = self.outputs.reshape(self.outputs.shape[0],1)
 
 		# Prepare validation data for early stopping.
 		if early_stopping:
 			self.validation_inputs = np.array(validation_inputs)
-			if self.validation_inputs.ndim == 1:
-				self.validation_inputs = self.validation_inputs.reshape(
-					self.validation_inputs.shape[0],1)
 			self.validation_outputs = np.array(validation_outputs)
-			if self.validation_outputs.ndim == 1:
-				self.validation_outputs = self.validation_outputs.reshape(
-					self.validation_outputs.shape[0], 1)
 
 		self.test_cases = self.inputs.shape[0]
 		self.input_neurons = np.array([len(self.inputs[0])])
@@ -84,6 +74,7 @@ class NeuralNet(object):
 		self.regularization = regularization
 		self.regularization_param = regularization_param
 		self.learning_method = method
+		self.lr_decay = lr_decay
 
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
 				mini_batch_size == None):
@@ -92,6 +83,7 @@ class NeuralNet(object):
 				"MINI_BATCH_LEARNING method")
 		self.mini_batch_size = mini_batch_size
 
+		# Initialize all required variables.
 		self.neural_layers = np.concatenate(
 			[self.input_neurons, self.hidden_layers, self.output_neurons])
 		self.num_layers = self.neural_layers.shape[0]
@@ -181,6 +173,9 @@ class NeuralNet(object):
 		np.random.shuffle(order)
 		self.inputs = self.inputs[order, :]
 		self.outputs = self.outputs[order, :]
+
+	def _decay_lr(self, epoch):
+		self.eta = self.eta * (1. / (1 + epoch * self.lr_decay))
 
 	def _forward_prop(self, inputs):
 		for i in range(self.num_layers - 1):
@@ -280,14 +275,14 @@ class NeuralNet(object):
 		old_validation_error2 = 10002
 		validation_error = 10001
 		error = 1000
+		epoch = 1
 
 		if max_epoch:
-			epoch = 1
 			while max_epoch >= epoch:
 				error = self._perform_single_learning_iter()
 				if (epoch % report_back_at) == 0:
 					print "E(train, %d epoch) = %f" % (epoch, error)
-
+					self._decay_lr(epoch)
 					if show_validation_error:
 						validation_test = self.get_outputs(self.validation_inputs)
 						validation_error = self.calculate_error(
@@ -299,12 +294,14 @@ class NeuralNet(object):
 			while ((old_validation_error2 - old_validation_error1) > 0.0001 or 
 					(old_validation_error1 - validation_error) > 0.0001):
 				error = self._perform_single_learning_iter()
+				self._decay_lr(epoch)
 				old_validation_error2 = old_validation_error1
 				old_validation_error1 = validation_error
 
 				validation_test = self.get_outputs(self.validation_inputs)
 				validation_error = self.calculate_error(
 					self.validation_outputs, validation_test)
+				epoch += 1
 			print "E(validation) = %f, E(train) = %f" % (validation_error,  error)
 
 		else:
