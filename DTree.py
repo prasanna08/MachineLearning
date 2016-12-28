@@ -21,7 +21,7 @@ class DTree(object):
 		for aclass in new_classes:
 			frequency[classIndex] = np.sum(classes == aclass)
 			total_entropy += self.calc_entropy(frequency[classIndex] / num_data)
-			total_gini += frequency[classIndex] / num_data
+			total_gini += (frequency[classIndex] / num_data ** 2)
 			classIndex += 1
 
 		total_gini = 1 - total_gini
