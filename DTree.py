@@ -5,11 +5,12 @@ class DTree(object):
 
 	As of now it only works on data that has descrete feature values.
 	If any feature of input data has continuos value then this will not work.
+	TODO: Add support for continuous values as well.
 	"""
 	def __init__(self):
 		pass
 
-	def make_tree(self, data, classes, feature_names=None):
+	def make_tree(self, data, classes, feature_names=None, maxlevel=-1, level=0, forest=0):
 		num_data = data.shape[0]
 		num_features = data.shape[1]
 		new_classes = np.unique(classes)
@@ -27,14 +28,20 @@ class DTree(object):
 		total_gini = 1 - total_gini
 		default = int(new_classes[frequency.argmax()])
 
-		if num_data == 0 or num_features == 0:
+		if num_data == 0 or num_features == 0 or (maxlevel>=0 and level>maxlevel):
 			return default
 		elif len(new_classes) == 1:
 			return int(new_classes[0])
 		else:
 			gain = np.zeros(num_features)
 			ggain = np.zeros(num_features)
-			for feature in range(num_features):
+			featureSet = range(num_features)
+
+			if forest != 0:
+				np.random.shuffle(featureSet)
+				featureSet = featureSet[:forest]
+
+			for feature in featureSet:
 				g, gg = self.calc_info_gain(data, classes, feature)
 				gain[feature] = total_entropy - g
 				ggain[feature] = total_gini - gg
@@ -48,7 +55,9 @@ class DTree(object):
 				new_data_classes = classes[points]
 				#new_feature_names = feature_names[:best_feature]
 				#new_feature_names.extend(feature_names[best_feature+1:])
-				subtree = self.make_tree(new_data, new_data_classes)
+				subtree = self.make_tree(
+					new_data, new_data_classes, maxlevel=maxlevel, level=level,
+					forest=forest)
 				tree[best_feature][value] = subtree
 
 			return tree
