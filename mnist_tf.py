@@ -11,7 +11,8 @@ def calculate_accuracy(prediction, target):
 
 data = pickle.load(open('MNIST_dataset.pickle', 'rb'))
 batch_size = 256
-hidden_layer_size = 300
+hidden_1 = 500
+hidden_2 = 300
 
 train_data = data['train_data']
 train_labels = preprocess.onehot(data['train_labels'])
@@ -32,35 +33,38 @@ with graph.as_default():
 	tf_valid_data = tf.constant(data['valid_data'], dtype=tf.float32)
 	tf_test_data = tf.constant(data['test_data'], dtype=tf.float32)
 
-	w_hidden = tf.Variable(
-		tf.truncated_normal([n_features, hidden_layer_size]))
-	b_hidden = tf.Variable(tf.zeros([hidden_layer_size]))
+	w_hidden_1 = tf.Variable(tf.truncated_normal([n_features, hidden_1]))
+	b_hidden_1 = tf.Variable(tf.zeros([hidden_1]))
 	
-	hidden_layer = tf.matmul(tf_train_data, w_hidden) + b_hidden
-	hidden_layer = tf.sigmoid(hidden_layer)
+	w_hidden_2 = tf.Variable(tf.truncated_normal([hidden_1, hidden_2]))
+	b_hidden_2 = tf.Variable(tf.truncated_normal([hidden_2]))
 
-	w_output = tf.Variable(
-		tf.truncated_normal([hidden_layer_size, n_outputs]))
+	w_output = tf.Variable(tf.truncated_normal([hidden_2, n_outputs]))
 	b_output = tf.Variable(tf.zeros([n_outputs]))
 
-	output = tf.matmul(hidden_layer, w_output) + b_output
+	def forward(inputs, dropout=True):
+		hidden_layer = tf.matmul(inputs, w_hidden_1) + b_hidden_1
+		hidden_layer = tf.nn.relu(hidden_layer)
+		if dropout:
+			hidden_layer = tf.nn.dropout(hidden_layer, 0.5)
+		hidden_layer = tf.matmul(hidden_layer, w_hidden_2) + b_hidden_2
+		hidden_layer = tf.nn.relu(hidden_layer)
+		if dropout:
+			hidden_layer = tf.nn.dropout(hidden_layer, 0.5)
+		return tf.matmul(hidden_layer, w_output) + b_output
+
+	output = forward(tf_train_data)
 	loss = tf.reduce_mean(
 		tf.nn.softmax_cross_entropy_with_logits(output, tf_train_labels))
 
-	optimizer = tf.train.AdagradOptimizer(0.3).minimize(loss)
+	optimizer = tf.train.AdamOptimizer().minimize(loss)
 
 	train_prediction = tf.nn.softmax(output)
-	valid_prediction = tf.nn.softmax(
-		tf.matmul(
-			tf.sigmoid(tf.matmul(tf_valid_data, w_hidden) + b_hidden),
-			w_output) + b_output)
-	test_prediction = tf.nn.softmax(
-		tf.matmul(
-			tf.sigmoid(tf.matmul(tf_test_data, w_hidden) + b_hidden),
-			w_output) + b_output)
+	valid_prediction = tf.nn.softmax(forward(tf_valid_data, False))
+	test_prediction = tf.nn.softmax(forward(tf_test_data, False))
 
 # Run NN.
-num_steps = 10001
+num_steps = 5001
 with tf.Session(graph=graph) as session:
 	tf.global_variables_initializer().run()
 	print "Initialized"
