@@ -10,7 +10,7 @@ class NeuralNet(object):
 			method=BATCH_LEARNING, mini_batch_size=None, outtype='softmax',
 			cost_func='log', optimizer='adam', regularization=True,
 			regularization_param=1.0, lr_decay=0.0, lr_decay_type='inv',
-			beta1=0.9, beta2=0.995, eps=1e-8):
+			beta1=0.9, beta2=0.999, eps=1e-8):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -46,7 +46,7 @@ class NeuralNet(object):
 			cost_func: str. This tells which cost function to use. Possibel
 				choices are 'mse' (Mean Squared Error) and 'log' (or Cross
 				Entropy) error function.
-			Optimizer: str. What type of optimizer to use. Currently supports
+			optimizer: str. What type of optimizer to use. Currently supports
 				'momentum', 'nag', 'adam', 'adagrad', 'rmsprop'.
 			regularization: bool. This specified whether to use regularization
 				or not. L2 regularization is used if this is True.
@@ -99,8 +99,9 @@ class NeuralNet(object):
 		self.neural_layers = np.concatenate(
 			[self.input_neurons, self.hidden_layers, self.output_neurons])
 		self.num_layers = self.neural_layers.shape[0]
-		self.theta = [np.random.normal(0.0, 1.0, (self.neural_layers[i+1], self.neural_layers[i]+1))
+		self.theta = [np.random.randn(self.neural_layers[i+1], self.neural_layers[i]+1) / np.sqrt(2.0 / self.neural_layers[i]+1)
 			for i in np.arange(self.num_layers-1)]
+
 		self.old_updates = [np.zeros((self.neural_layers[i+1], self.neural_layers[i]+1))
 			for i in np.arange(self.num_layers-1)]
 		self.cache = [np.zeros((self.neural_layers[i+1], self.neural_layers[i]+1))
@@ -258,7 +259,7 @@ class NeuralNet(object):
 		return -1 * (self.eta * grad) / (np.sqrt(self.cache[layer - 1]) + self.eps)
 
 	def rmsprop_optimizer(self, layer, grad):
-		self.cache[layer - 1] = (1 - self.beta2) * self.cache[layer - 1] + self.beta2 * (grad**2)
+		self.cache[layer - 1] = self.beta1 * self.cache[layer - 1] + (1 - self.beta1) * (grad**2)
 		return -1 * (self.eta * grad) / (np.sqrt(self.cache[layer - 1]) + self.eps)
 
 	def adam_optimizer(self, layer, grad):
@@ -329,7 +330,7 @@ class NeuralNet(object):
 		return outputs.argmax(axis=1)
 
 	def calculate_accuracy(self, inputs, target):
-		return np.sum(self.get_predicted_classes(inputs) == target) / 100.0
+		return np.sum(self.get_predicted_classes(inputs) == target) / float(inputs.shape[0]) * 100.0
 
 	def _calculate_accuracy(self, output, target):
 		return np.sum(output.argmax(axis=1) == target.argmax(axis=1)) / 100.0
