@@ -6,10 +6,11 @@ class NeuralNet(object):
 	STOCHASTIC_LEARNING = 'stochastic'
 	def __init__(
 			self, train_inputs, train_outputs, hidden_layers, validation_inputs,
-			validation_outputs, eta=0.7, momentum=0.3, early_stopping=True,
-			method=BATCH_LEARNING, mini_batch_size=None, outtype='sigmoid',
-			cost_func='log', nesterov_momentum=True, regularization=True,
-			regularization_param=1.0, lr_decay=0.0):
+			validation_outputs, eta=0.7, momentum=0.9, early_stopping=True,
+			method=BATCH_LEARNING, mini_batch_size=None, outtype='softmax',
+			cost_func='log', optimizer='adam', regularization=True,
+			regularization_param=1.0, lr_decay=0.0, lr_decay_type='inv',
+			beta1=0.9, beta2=0.995, eps=1e-8):
 		"""NeuralNet class is used to create neural network classifier.
 
 		Args:
@@ -45,22 +46,23 @@ class NeuralNet(object):
 			cost_func: str. This tells which cost function to use. Possibel
 				choices are 'mse' (Mean Squared Error) and 'log' (or Cross
 				Entropy) error function.
-			nesterov_momentum: bool. This specified whether to use nesterov's
-				momentum or continuous momentum.
+			Optimizer: str. What type of optimizer to use. Currently supports
+				'momentum', 'nag', 'adam', 'adagrad', 'rmsprop'.
 			regularization: bool. This specified whether to use regularization
 				or not. L2 regularization is used if this is True.
 			regularization_param: float. This is regularization parameter used
 				for penalty calculation and weights update.
+			lr_decay: float. Hyperparameter used for annealing learning rate.
+			lr_decay_type: str. Method used for learning rate decay. Possible
+				types are 'inv' and 'exp'.
+			beta1: float. Adam optimizer hyper parameter.
+			beta2: float. Adam optimizer hyper parameter.
+			eps: float. Small constant to avoid division by zero in
+				Adam, Adagrad and RMSprop optimizer.
 		"""
 		# Prepare train_data.
 		self.inputs = np.array(train_inputs)
 		self.outputs = np.array(train_outputs)
-
-		# Prepare validation data for early stopping.
-		if early_stopping:
-			self.validation_inputs = np.array(validation_inputs)
-			self.validation_outputs = np.array(validation_outputs)
-
 		self.test_cases = self.inputs.shape[0]
 		self.input_neurons = np.array([len(self.inputs[0])])
 		self.output_neurons = np.array([len(self.outputs[0])])
@@ -70,11 +72,21 @@ class NeuralNet(object):
 		self.early_stopping = early_stopping
 		self.outtype = outtype
 		self.cost_func = cost_func
-		self.nesterov_momentum = nesterov_momentum
+		self.optimizer = optimizer
 		self.regularization = regularization
 		self.regularization_param = regularization_param
 		self.learning_method = method
 		self.lr_decay = lr_decay
+		self.lr_decay_type = lr_decay_type
+		self.beta1 = beta1
+		self.beta2 = beta2
+		self.eps = eps
+		self.init_eta = eta
+
+		# Prepare validation data for early stopping.
+		if early_stopping:
+			self.validation_inputs = np.array(validation_inputs)
+			self.validation_outputs = np.array(validation_outputs)
 
 		if (self.learning_method == self.MINI_BATCH_LEARNING and
 				mini_batch_size == None):
@@ -90,6 +102,8 @@ class NeuralNet(object):
 		self.theta = [np.random.normal(0.0, 1.0, (self.neural_layers[i+1], self.neural_layers[i]+1))
 			for i in np.arange(self.num_layers-1)]
 		self.old_updates = [np.zeros((self.neural_layers[i+1], self.neural_layers[i]+1))
+			for i in np.arange(self.num_layers-1)]
+		self.cache = [np.zeros((self.neural_layers[i+1], self.neural_layers[i]+1))
 			for i in np.arange(self.num_layers-1)]
 
 		if self.learning_method == self.BATCH_LEARNING:
@@ -174,8 +188,13 @@ class NeuralNet(object):
 		self.inputs = self.inputs[order, :]
 		self.outputs = self.outputs[order, :]
 
-	def _decay_lr(self, epoch):
-		self.eta = self.eta * (1. / (1 + epoch * self.lr_decay))
+	def _decay_lr(self):
+		if self.lr_decay_type == 'inv':
+			self.eta = self.init_eta * (1. / (1 + self.global_step * self.lr_decay))
+		elif self.lr_decay_type == 'exp':
+			self.eta = self.init_eta * np.exp(-1 * self.lr_decay * self.global_step)
+		else:
+			raise Exception('Unknown method for learning rate decay.')
 
 	def _forward_prop(self, inputs):
 		for i in range(self.num_layers - 1):
@@ -199,20 +218,55 @@ class NeuralNet(object):
 			grad = np.dot(
 				self.delta[i].T, np.concatenate(
 					[np.ones((self.inputs_per_batch,1)), self.sig_activation[i-1]], axis=1))
-			grad = (self.eta * grad) / self.inputs_per_batch
+			grad = grad / self.inputs_per_batch
 
 			if self.regularization:
 				t = np.zeros(self.theta[i-1].shape)
 				t[:, 1:] = self.theta[i-1][:, 1:]
 				grad += (self.regularization_param * t / self.inputs_per_batch)
 
-			diff = self.momentum * self.old_updates[i-1] - grad
-			self.old_updates[i-1] = diff
+			grad = self.optimize(i, grad)
+			self.theta[i-1] += grad
 
-			if self.nesterov_momentum:
-				diff = self.momentum * diff - grad
+	def optimize(self, layer, grad):
+		if self.optimizer == 'vanilla':
+			return -1 * (self.eta * grad)
+		elif self.optimizer == 'momentum':
+			return self.momentum_optimizer(layer, grad)
+		elif self.optimizer == 'nag':
+			return self.nag_optimizer(layer, grad)
+		elif self.optimizer == 'adam':
+			return self.adam_optimizer(layer, grad)
+		elif self.optimizer == 'adagrad':
+			return self.adagrad_optimizer(layer, grad)
+		elif self.optimizer == 'rmsprop':
+			return self.rmsprop_optimizer(layer, grad)
+		else:
+			raise Exception('Unknown optimizer.')
 
-			self.theta[i-1] += diff
+	def momentum_optimizer(self, layer, grad):
+		new_grad = self.momentum * self.old_updates[layer - 1] - self.eta * grad
+		self.old_updates[layer - 1] = new_grad
+		return new_grad
+
+	def nag_optimizer(self, layer, grad):
+		new_grad = self.momentum_optimizer(layer, grad)
+		return self.momentum * new_grad - self.eta * grad
+
+	def adagrad_optimizer(self, layer, grad):
+		self.cache[layer - 1] += (grad**2)
+		return -1 * (self.eta * grad) / (np.sqrt(self.cache[layer - 1]) + self.eps)
+
+	def rmsprop_optimizer(self, layer, grad):
+		self.cache[layer - 1] = (1 - self.beta2) * self.cache[layer - 1] + self.beta2 * (grad**2)
+		return -1 * (self.eta * grad) / (np.sqrt(self.cache[layer - 1]) + self.eps)
+
+	def adam_optimizer(self, layer, grad):
+		self.old_updates[layer - 1] = self.beta1 * self.old_updates[layer - 1] + (1 - self.beta1) * grad
+		self.cache[layer - 1] = self.beta2 * self.cache[layer - 1] + (1 - self.beta2) * (grad**2)
+		bias_correction_grad = (1.0 / (1 - self.beta1 ** self.global_step))
+		bias_correction_cache = (1.0 / (1 - self.beta2 ** self.global_step))
+		return -1 * (self.eta * self.old_updates[layer - 1] * bias_correction_grad) / (np.sqrt(self.cache[layer - 1] * bias_correction_cache) + self.eps)
 
 	def _perform_single_iter(self, inputs, outputs):
 		self._forward_prop(inputs)
@@ -270,38 +324,49 @@ class NeuralNet(object):
 			activations = np.dot(inputs, self.theta[i].T)
 		return self.calculate_output(activations)
 
-	def train(self, show_validation_error=True, max_epoch=None, report_back_at=100):
+	def get_predicted_classes(self, inputs):
+		outputs = self.get_outputs(inputs)
+		return outputs.argmax(axis=1)
+
+	def calculate_accuracy(self, inputs, target):
+		return np.sum(self.get_predicted_classes(inputs) == target) / 100.0
+
+	def _calculate_accuracy(self, output, target):
+		return np.sum(output.argmax(axis=1) == target.argmax(axis=1)) / 100.0
+
+	def train(self, max_epoch=None, report_back_at=100, show_validation_error=True):
 		old_validation_error1 = 10003
 		old_validation_error2 = 10002
 		validation_error = 10001
 		error = 1000
-		epoch = 1
+		self.global_step = 1
 
 		if max_epoch:
-			while max_epoch >= epoch:
+			while max_epoch >= self.global_step:
+				self.global_step += 1
 				error = self._perform_single_learning_iter()
-				if (epoch % report_back_at) == 0:
-					print "E(train, %d epoch) = %f" % (epoch, error)
-					self._decay_lr(epoch)
+				self._decay_lr()
+				if (self.global_step % report_back_at) == 0:
+					print "E(train, %d epoch) = %f" % (self.global_step, error)
 					if show_validation_error:
 						validation_test = self.get_outputs(self.validation_inputs)
 						validation_error = self.calculate_error(
 							self.validation_outputs, validation_test)
 						print "E(validation) = %f" % validation_error
-				epoch += 1
 
 		elif self.early_stopping:
 			while ((old_validation_error2 - old_validation_error1) > 0.0001 or 
 					(old_validation_error1 - validation_error) > 0.0001):
+				self.global_step += 1
 				error = self._perform_single_learning_iter()
-				self._decay_lr(epoch)
+				self._decay_lr()
+				
 				old_validation_error2 = old_validation_error1
 				old_validation_error1 = validation_error
 
 				validation_test = self.get_outputs(self.validation_inputs)
 				validation_error = self.calculate_error(
 					self.validation_outputs, validation_test)
-				epoch += 1
 			print "E(validation) = %f, E(train) = %f" % (validation_error,  error)
 
 		else:
