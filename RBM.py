@@ -52,10 +52,10 @@ class RBM(object):
 
 			for step in range(self.nCD):
 				recnsp, recnsa = self.get_v_given_h(hiddena)
-				hiddenp, hiddena = self.get_h_given_v(recnsa)
+				hiddenp, hiddena = self.get_h_given_v(recnsp)
 
-			negative = np.dot(hiddena.T, recnsa)
-			negativevb = recnsa.sum(axis=0)
+			negative = np.dot(hiddenp.T, recnsp)
+			negativevb = recnsp.sum(axis=0)
 			negativehb = hiddenp.sum(axis=0)
 
 			dw = lr * (positive - negative) / self.data.shape[0]
