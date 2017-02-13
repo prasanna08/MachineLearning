@@ -8,7 +8,7 @@ TODO:
 import numpy as np
 
 class RBM(object):
-	def __init__(self, data, n_hidden, nCD, lr=0.1, momentum=0.6, decay=1e-3):
+	def __init__(self, data, n_hidden, nCD, lr=0.3, momentum=0.6, decay=1e-3):
 		"""The RBM class.
 
 		Args:
@@ -23,9 +23,9 @@ class RBM(object):
 		self.n_visible = data.shape[1]
 		self.n_hidden = n_hidden
 		self.nCD = nCD
-		self.weights = np.ranodm.uniform(low=0.0, high=0.1, size=(self.n_hidden, self.n_visible))
-		self.v_bias = np.ranodm.uniform(low=0.0, high=0.1, size=(self.n_visible))
-		self.h_bias = np.ranodm.uniform(low=0.0, high=0.1, size=(self.n_hidden))
+		self.weights = np.random.uniform(low=0.0, high=0.1, size=(self.n_hidden, self.n_visible))
+		self.v_bias = np.random.uniform(low=0.0, high=0.1, size=(self.n_visible))
+		self.h_bias = np.random.uniform(low=0.0, high=0.1, size=(self.n_hidden))
 		self.lr = lr
 		self.momentum = momentum
 		self.decay = decay
@@ -43,7 +43,7 @@ class RBM(object):
 		visibleact = (visibleprob>np.random.uniform(size=(visibleprob.shape[0], self.n_visible))).astype('float')
 		return visibleprob, visibleact
 
-	def train(self, epoch, persistent):
+	def train(self, epoch, persistent=None, display_at=50):
 		"""Train method for training RBM.
 
 		Args:
@@ -55,7 +55,7 @@ class RBM(object):
 		dw = 0
 		dvb = 0
 		dhb = 0
-		for e in epoch:
+		for e in range(epoch):
 			hiddenp, hiddena = self.get_h_given_v(self.data)
 
 			positive = np.dot(hiddena.T, self.data)
@@ -80,8 +80,9 @@ class RBM(object):
 			dhb = (self.lr * (positivehb - negativehb) / self.data.shape[0]) + self.momentum * dhb
 			self.h_bias += dhb
 
-			error = np.sum((self.data - recnsa)**2)
-			print error
+			error = np.sum((self.data - recnsa)**2) / self.data.shape[0]
+			if epoch % display_at == 0:
+				print error, self.energy(self.data, hiddenp)
 
 	def energy(self, visible, hidden):
 		vb = (visible * self.v_bias).sum()
@@ -89,10 +90,10 @@ class RBM(object):
 		vwh = (np.dot(visible, self.weights.T) * hidden).sum()
 		return - (vb + hb + vwh)
 
-	def sample(n_samples, data=None):
+	def sample(self, n_samples, data=None):
 		samples = np.zeros((n_samples, self.n_visible))
 		if data is None:
-			data = np.random.unforom(size=(1, self.n_visible))
+			data = np.random.uniform(size=(1, self.n_visible))
 
 		for i in range(n_samples):
 			hiddenp, hiddena = self.get_h_given_v(data)
