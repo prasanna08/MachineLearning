@@ -22,7 +22,7 @@ class LSTM(object):
 		num_steps = X.shape[0]
 
 		Hin = np.zeros((num_steps, batch_size, n_input + n_hidden + 1))
-		IFOG = np.zeros((num_steps, batch_size, 4 * n_hidden))
+		IFOG = np.zeros((num_steps, batch_size, 4 * n_hidden)) # input, input gate, forget, output
 		IFOGf = np.zeros((num_steps, batch_size, 4 * n_hidden))
 		C = np.zeros((num_steps, batch_size, n_hidden))
 		Ct = np.zeros((num_steps, batch_size, n_hidden))
@@ -36,7 +36,7 @@ class LSTM(object):
 			Hin[t, :, 1:n_input+1] = X[t]
 			Hin[t, :, n_input+1:] = h0 if t == 0 else Hout[t-1]
 
-			IFOG[t] = np.dot(Hin[t], WLSTM) # input, input gate, forget, output
+			IFOG[t] = np.dot(Hin[t], WLSTM)
 			IFOGf[t, :, :n_hidden] = np.tanh(IFOG[t, :, :n_hidden])
 			IFOGf[t, :, n_hidden:] = self.Sigmoid(IFOG[t, :, n_hidden:])
 
