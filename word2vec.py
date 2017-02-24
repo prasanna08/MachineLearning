@@ -1,12 +1,13 @@
 """This is word2vec model for high quality representation of words."""
 import numpy as np
+from collections import Counter
 import tensorflow as tf
 import preprocess
 
 def read_file(file_name):
 	f = open(file_name, 'r')
 	words = f.read().split()
-
+	return words
 
 def word2id(words, vocabulary_size):
 	count = [['UNK', -1]]
@@ -97,7 +98,7 @@ class BatchGenerator(object):
 class Word2Vec(object):
 	def __init__(
 			self, batch_size, window_size, n_skips, vocabulary_size,
-			embedding_dim, neg_k=10):
+			embedding_dim, neg_k=10, generator=None):
 		"""Word2Vec class.
 
 		It is assumed that data provided is numerical and contains word_ids rather
@@ -112,6 +113,7 @@ class Word2Vec(object):
 		self.n_skips = n_skips
 		self.vocabulary_size = vocabulary_size
 		self.neg_k = neg_k
+		self.gen = generator
 		
 		self.embeddings = preprocess.xavier_init(
 			(self.n_inputs, self.n_hidden), self.n_inputs, self.n_hidden)
@@ -181,12 +183,15 @@ class Word2Vec(object):
 		return d_cache
 
 	def Train(self, data, max_epochs, learning_rate, momentum):
-		gen = BatchGenerator(
-			self.batch_size, self.window_size, self.n_skips, data)
-		self.learning_rate = learning_rate
+		# If batch generator is not present create one.
+		if self.gen is None:
+			self.gen = BatchGenerator(
+				self.batch_size, self.window_size, self.n_skips, data)
 
+		# Use average loss to get a good estimation.
+		average_loss = 0
 		for epoch in xrange(max_epochs):
-			batch_input, batch_output = gen.next_batch()
+			batch_input, batch_output = self.gen.next_batch()
 			cache = self.Forward(batch_input, batch_output)
 
 			samples = cache['samples']
@@ -205,12 +210,16 @@ class Word2Vec(object):
 			self.previous_d_softmax_b = momentum * self.previous_d_softmax_b - learning_rate * d_softmax_b
 			self.softmax_b = self.softmax_b + self.previous_d_softmax_b
 
-			d_embeddings = self.normalize_gradient(self.embeddings)
+			d_embeddings = self.normalize_gradient(d_cache['d_embeddings'])
 			self.previous_d_embeddings = momentum * self.previous_d_embeddings - learning_rate * d_embeddings
 			self.embeddings = self.embeddings + self.previous_d_embeddings
 
+			average_loss += loss
 			if epoch % 100 == 0:
+				if epoch > 0:
+					loss = average_loss / 100
 				print "Epoch: %d, Error: %.6f" % (epoch, loss)
+				average_loss = 0
 
 	def softmax(self, z):
 		ez = np.exp(z)
@@ -222,12 +231,12 @@ class Word2Vec(object):
 		target[:, -1] = 1
 		loss = np.sum(-target * np.log(outputs)) / outputs.shape[0]
 		d_out = outputs - target
-		return d_out, loss
+		return d_out, loss	
 
 	def normalize_gradient(self, grad):
 		return grad / self.batch_size
 
 	def cosine_similarity(self, word, top=10):
-		mult = np.sum(self.embeddings[word] * self.embeddings, 1)
-		normalizer = np.sum(self.embeddings[word]**2) * np.sum(self.embeddings**2, 1)
-		return np.argsort(mult/normalizer)[-1:-top-1:-1]
+		normal = self.embeddings / np.sqrt(np.sum(self.embeddings ** 2, 1)).reshape(-1, 1)
+		simi = np.sum(normal[word] * normal, 1)
+		return np.argsort(simi)[-1:-top-1:-1]
