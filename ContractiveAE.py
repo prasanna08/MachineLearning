@@ -56,8 +56,7 @@ class CAE(object):
 		g = ((h) * (1 - h))**2
 		p1 = g.sum(0) * self.w_encode
 		p2 = np.dot(X.T, g*(1 - 2*h))*(self.w_encode**2).sum(0)
-		d_w_encode_p2 = self.contractive_factor * (p1 + p2)
-		d_w_encode = d_w_encode_p1 + d_w_encode_p2
+		d_w_encode = d_w_encode_p1 + self.contractive_factor * (p1 + p2)
 
 		d_cache = {
 			'd_w_encode': d_w_encode,
