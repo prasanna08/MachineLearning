@@ -214,6 +214,9 @@ class Word2Vec(object):
 			self.previous_d_embeddings = momentum * self.previous_d_embeddings - learning_rate * d_embeddings
 			self.embeddings = self.embeddings + self.previous_d_embeddings
 
+			# Normalize embeddings.
+			self.embeddings /= np.sqrt((self.embeddings ** 2).sum(axis=1)[:, np.newaxis])
+
 			average_loss += loss
 			if epoch % 100 == 0:
 				if epoch > 0:
