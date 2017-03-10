@@ -12,23 +12,24 @@ def read_file(file_name):
 def word2id(words, vocabulary_size):
 	count = [['UNK', -1]]
 	count.extend(Counter(words).most_common(vocabulary_size - 1))
-	word2ids = dict()
+	word2id = dict()
 	
 	for word, _ in count:
-		word2ids[word] = len(word2ids)
+		word2id[word] = len(word2id)
 
 	unk_count = 0
 	indexed_data = []
 	for word in words:
-		if word in word2ids:
-			index = word2ids[word]
+		if word in word2id:
+			index = word2id[word]
 		else:
 			index = 0
 			unk_count += 1
 		indexed_data.append(index)
 
-	ids2words = dict(zip(word2ids.values(), word2ids.keys()))
-	return word2ids, ids2words, count, indexed_data
+	count[0][1] = unk_count
+	id2word = dict(zip(word2id.values(), word2id.keys()))
+	return word2id, id2word, count, indexed_data
 
 
 class BatchGenerator(object):
@@ -88,7 +89,7 @@ class BatchGenerator(object):
 				batch_input[i*self.n_skips + k] = target
 				batch_output[i*self.n_skips + k] = labels[k]
 
-			self._cursor = (self._cursor + 1) % len(self.data)
+			self._cursor = (self._cursor + 1) % (len(self.data) - self.window_size)
 			words.pop(0)
 			words.append(self.data[self._cursor])
 
@@ -98,11 +99,13 @@ class BatchGenerator(object):
 class Word2Vec(object):
 	def __init__(
 			self, batch_size, window_size, n_skips, vocabulary_size,
-			embedding_dim, neg_k=10, generator=None):
+			embedding_dim, neg_k=64, sample_vocabulary=None):
 		"""Word2Vec class.
 
 		It is assumed that data provided is numerical and contains word_ids rather
-		than actual words. Currently support skip-gram model only.
+		than actual words.
+
+		Currently support skip-gram model only.
 		"""
 		self.n_inputs = vocabulary_size
 		self.n_hidden = embedding_dim
@@ -113,7 +116,9 @@ class Word2Vec(object):
 		self.n_skips = n_skips
 		self.vocabulary_size = vocabulary_size
 		self.neg_k = neg_k
-		self.gen = generator
+		self.sample_vocabulary = sample_vocabulary
+		self.sample_vocabulary_size = int(self.vocabulary_size / 5)
+		self.gen = None
 		
 		self.embeddings = preprocess.xavier_init(
 			(self.n_inputs, self.n_hidden), self.n_inputs, self.n_hidden)
@@ -126,19 +131,24 @@ class Word2Vec(object):
 		self.previous_d_embeddings = np.zeros(self.embeddings.shape)
 
 	def negative_samples(self, labels):
+		vocab = xrange(self.sample_vocabulary_size)
+		sample_indices = np.random.choice(vocab, self.neg_k - 1)
 		samples = []
-		vocab = xrange(self.vocabulary_size)
-		while len(samples) < self.neg_k - 1:
-			choice = np.random.choice(vocab)
-			if choice not in labels:
+		for ind in sample_indices:
+			if self.sample_vocabulary[ind] in labels:
+				choice  = np.random.choice(self.vocabulary_size)
+				while choice in labels:
+					choice  = np.random.choice(self.vocabulary_size)
 				samples.append(choice)
+			else:
+				samples.append(self.sample_vocabulary[ind])
 		return samples
 
+	def set_sample_vocabulary(self, word_counts, word2id):
+		self.sample_vocabulary = np.array([word2id[w] for w, c in word_counts[:self.sample_vocabulary_size]])
+
 	def Forward(self, data, labels):
-		hidden = np.zeros((data.shape[0], self.n_hidden))
-		for i in range(data.shape[0]):
-			word = data[i]
-			hidden[i] = self.embeddings[word, :]
+		hidden = self.embeddings[data, :]
 
 		# Do negative sampled softmax.
 		samples = np.zeros((self.batch_size, self.neg_k), dtype=np.int32)
@@ -147,8 +157,7 @@ class Word2Vec(object):
 
 		output = np.zeros((self.batch_size, self.neg_k))
 		for i in range(data.shape[0]):
-			output[i, :] = np.dot(hidden[i], self.softmax_w[:, samples[i]]) + self.softmax_b[samples[i]]
-			output[i, :] = self.softmax(output[i])
+			output[i, :] = self.softmax(np.dot(hidden[i], self.softmax_w[:, samples[i]]) + self.softmax_b[samples[i]])
 
 		cache = {
 			'hidden': hidden,
@@ -171,9 +180,7 @@ class Word2Vec(object):
 			d_hidden[i] = np.dot(d_out[i], self.softmax_w[:, samples[i]].T)
 			d_softmax_w[:, samples[i]] += np.dot(hidden[i][:, np.newaxis], d_out[i, np.newaxis])
 			d_softmax_b[samples[i]] += d_out[i]
-
-		for i in range(d_hidden.shape[0]):
-			d_embeddings[data[i], :] += d_hidden.T[:, i]
+			d_embeddings[data[i], :] += d_hidden[i]
 
 		d_cache = {
 			'd_softmax_b': d_softmax_b,
@@ -185,8 +192,14 @@ class Word2Vec(object):
 	def Train(self, data, max_epochs, learning_rate, momentum):
 		# If batch generator is not present create one.
 		if self.gen is None:
+			self.word2id, self.id2word, word_counts, data = word2id(
+				data, self.vocabulary_size)
 			self.gen = BatchGenerator(
 				self.batch_size, self.window_size, self.n_skips, data)
+
+		if self.sample_vocabulary is None:
+			self.set_sample_vocabulary(word_counts, self.word2id)
+			del word_counts
 
 		# Use average loss to get a good estimation.
 		average_loss = 0
@@ -196,8 +209,7 @@ class Word2Vec(object):
 
 			samples = cache['samples']
 			# Compute output gradients.
-			d_out, loss = self.compute_output_gradient(
-				batch_output, cache['output'])
+			d_out, loss = self.compute_output_gradient(cache['output'])
 			# Compute other parameter gradients.
 			d_cache = self.Backward(d_out, cache)
 
@@ -225,21 +237,29 @@ class Word2Vec(object):
 				average_loss = 0
 
 	def softmax(self, z):
-		ez = np.exp(z)
+		ez = z - z.max()
+		ez = np.exp(ez)
 		return ez / ez.sum()
 
-	def compute_output_gradient(self, labels, outputs):
+	def compute_output_gradient(self, outputs):
 		# Xentropy loss function.
-		target = np.zeros((labels.shape[0], self.neg_k))
-		target[:, -1] = 1
-		loss = np.sum(-target * np.log(outputs)) / outputs.shape[0]
-		d_out = outputs - target
+		loss = np.sum(-1 * np.log(outputs)[:, -1]) / outputs.shape[0]
+		d_out = outputs.copy()
+		d_out[:, -1] = outputs[:, -1] - 1
 		return d_out, loss	
 
 	def normalize_gradient(self, grad):
 		return grad / self.batch_size
 
 	def cosine_similarity(self, word, top=10):
-		normal = self.embeddings / np.sqrt(np.sum(self.embeddings ** 2, 1)).reshape(-1, 1)
-		simi = np.sum(normal[word] * normal, 1)
-		return np.argsort(simi)[-1:-top-1:-1]
+		try:
+			self.id2word
+			self.word2id
+		except Exception:
+			print "Please train word2vec model with data first."
+			return None
+
+		word_id = self.word2id[word]
+		simi = np.sum(self.embeddings[word_id] * self.embeddings, 1)
+		sim_ids = np.argsort(simi)[-1:-top-1:-1]
+		return [self.id2word[i] for i in sim_ids]
