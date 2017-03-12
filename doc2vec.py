@@ -78,7 +78,6 @@ class Doc2Vec(object):
 		"""doc2vec model.
 
 		TODO: Implement DOM version of doc2vec.
-		TODO: Implement function for inference of new paragraph.
 		"""
 
 		self.batch_size = batch_size
@@ -122,8 +121,7 @@ class Doc2Vec(object):
 		"""Given a text paragraph convert it into equivalent numeric paragraph.
 		"""
 		para = tokenize_paragraphs([z])[0]
-		enc_para = [self.word2id[word] for word in para]
-		return enc_para	
+		return doc2id(z, self.word2id)
 
 	def softmax(self, z):
 		ez = z - z.max()
@@ -207,6 +205,7 @@ class Doc2Vec(object):
 		TODO: Implement DOM version of doc2vec.
 		"""
 		# If word2vec model is not trained then train that first.
+		data = tokenize_paragraphs(data)
 		if (not self.is_word2vec_trained) or train_word2vec:
 			self.Train_word2vec(data, max_epochs, learning_rate, momentum)
 
@@ -253,17 +252,58 @@ class Doc2Vec(object):
 				print "Epoch: %d, Error: %.6f" % (epoch, loss)
 				average_loss = 0
 
-	def vectorize_paragraph(self, para):
+	def vectorize_paragraphs(
+			self, paragraphs, max_epochs, learning_rate, momentum):
 		"""Create vector representation of a new paragraph.
 		
 		This is used at time of testing / inference to make decisions about
 		unseen paragraphs.
 		"""
-		pass
+		new_embeddings = preprocess.xavier_init(
+			(len(paragraphs) + self.doc_embeddings.shape[0], 
+				self.doc_embeddings.shape[1]), 
+			len(paragraphs) + self.doc_embeddings.shape[0],
+			self.doc_embeddings.shape[1])
 
-	def cosine_similarity(self, para, top=10):
+		new_embeddings[len(paragraphs):, :] = self.doc_embeddings
+		original_embeddings = self.doc_embeddings.copy()
+		self.doc_embeddings = new_embeddings
+		previous_d_doc_embeddings = np.zeros(new_embeddings.shape)
+
+		gen = BatchGenerator(paragraphs, self.batch_size, self.n_skips)
+
+		for epoch in xrange(max_epochs):
+			batch_input, batch_output = gen.next_batch()
+			cache = self.Forward(batch_input, batch_output)
+
+			samples = cache['samples']
+			# Compute output gradients.
+			dout, loss = self.compute_output_gradient(cache['output'])
+			# Compute other parameter gradients.
+			d_cache = self.Backward(dout, cache)
+
+			d_doc_embeddings = self.normalize_gradient(d_cache['d_doc_embeddings'])
+			previous_d_doc_embeddings = momentum * previous_d_doc_embeddings - learning_rate * d_doc_embeddings
+			self.doc_embeddings = self.doc_embeddings + previous_d_doc_embeddings
+
+			# Normalize embeddings.
+			self.doc_embeddings /= np.sqrt((self.doc_embeddings ** 2).sum(axis=1)[:, np.newaxis])
+
+		self.doc_embeddings = original_embeddings
+		return new_embeddings[:len(paragraphs), :]
+
+	def cosine_similarity(
+			self, para, max_epochs, learning_rate, momentum, top=3):
 		"""Find similarity between given paragraph and some other paragraph."""
+		try:
+			self.id2word
+			self.word2id
+		except Exception:
+			print "Please train doc2vec model with data first."
+			return None
+
 		para = self._encode_paragraph(para)
-		p_vector = self.vectorize_paragraph(para)
+		p_vector = self.vectorize_paragraphs(
+			[para], max_epochs, learning_rate, momentum)
 		simi = np.sum(p_vector * self.doc_embeddings, 1)
-		return ids2doc(np.argsort(simi)[-1:-top-1:-1], self.id2word)
+		return np.argsort(simi)[-1:-top-1:-1]
