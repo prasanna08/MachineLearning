@@ -12,3 +12,10 @@ def xavier_init(shape, fan_in, fan_out):
 def xavier_init_normal(shape, fan_in, fan_out):
 	dev = np.sqrt(3.0 / (fan_in + fan_out))
 	return np.random.normal(size=shape, scale=dev)
+
+def randomize(data, labels):
+	order = np.arange(data.shape[0])
+	np.random.shuffle(order)
+	data = data[order]
+	labels = labels[order]
+	return data, labels
