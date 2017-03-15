@@ -76,8 +76,9 @@ class Doc2Vec(object):
 			window_size, vocabulary_size, neg_k, word2vec_model=None,
 			sample_vocabulary=None):
 		"""doc2vec model.
-
-		TODO: Implement DOM version of doc2vec.
+		
+		Currently support PV-DM version of doc2v
+		TODO: Implement PV-DBOW version of doc2vec.
 		"""
 
 		self.batch_size = batch_size
