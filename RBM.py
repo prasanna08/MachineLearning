@@ -2,19 +2,17 @@
 
 TODO:
 	Implement mini batch based training approach.
-	Implement output classification layer for supervised training and
-		classification.
 """
 import numpy as np
 
 class RBM(object):
-	def __init__(self, data, n_hidden, nCD, lr=0.3, momentum=0.6, decay=1e-3):
+	def __init__(self, data, n_hidden, labels=None, lr=0.3, momentum=0.6, decay=1e-3):
 		"""The RBM class.
 
 		Args:
 			data: matrix. The training data for RBM.
 			n_hidden: int. Number of hidden units.
-			nCD: int. Number of steps for gibbs sampling.
+			labels: matrix. Labels for data for supervised training.
 			lr: float. Learning rate.
 			momentum: float. Momentum rate for Momentum based SGD update.
 			decay: float. L2 weight decay coefficient.
@@ -22,58 +20,103 @@ class RBM(object):
 		self.data = data
 		self.n_visible = data.shape[1]
 		self.n_hidden = n_hidden
-		self.nCD = nCD
-		self.weights = np.random.uniform(low=0.0, high=0.1, size=(self.n_hidden, self.n_visible))
+		self.weights = np.random.uniform(low=0.0, high=0.1, size=(self.n_visible, self.n_hidden))
 		self.v_bias = np.random.uniform(low=0.0, high=0.1, size=(self.n_visible))
 		self.h_bias = np.random.uniform(low=0.0, high=0.1, size=(self.n_hidden))
 		self.lr = lr
 		self.momentum = momentum
 		self.decay = decay
+		self.labels = labels
+		if labels is not None:
+			self.n_labels = labels.shape[1]
+			self.labelweights = np.random.uniform(low=0.0, high=0.1, size=(self.n_hidden, self.n_labels))
+			self.labelbias = np.random.uniform(low=0.0, high=0.1, size=(self.n_labels))
 
-	def sigm(self, z):
+	def sigmoid(self, z):
 		return 1.0 / (1.0 + np.exp(-z))
 
-	def get_h_given_v(self, visible):
-		hiddenprob = self.sigm(np.dot(visible, self.weights.T) + self.h_bias)
-		hiddenact = (hiddenprob>np.random.uniform(size=(hiddenprob.shape[0], self.n_hidden))).astype('float')
+	def softmax(self, z):
+		if z.ndim > 1:
+			z -= z.max(axis=1)[:, np.newaxis]
+			ez = np.exp(z)
+			ez = ez / ez.sum(axis=1)[:, np.newaxis]
+		else:
+			z -= z.max()
+			ez = np.exp(z)
+			ez = ez / ez.sum()
+
+		return ez
+
+	def get_h_given_v(self, visible, labels):
+		if labels is not None:
+			hiddenprob = self.sigmoid(np.dot(visible, self.weights) + self.h_bias + np.dot(labels, self.labelweights.T))
+		else:
+			 hiddenprob = self.sigmoid(np.dot(visible, self.weights) + self.h_bias)
+		hiddenact = (hiddenprob>np.random.uniform(size=(hiddenprob.shape[0], self.n_hidden))).astype(np.int32)
 		return hiddenprob, hiddenact
 
 	def get_v_given_h(self, hidden):
-		visibleprob = self.sigm(np.dot(hidden, self.weights) + self.v_bias)
-		visibleact = (visibleprob>np.random.uniform(size=(visibleprob.shape[0], self.n_visible))).astype('float')
-		return visibleprob, visibleact
+		visibleprob = self.sigmoid(np.dot(hidden, self.weights.T) + self.v_bias)
+		visibleact = (visibleprob>np.random.uniform(size=(visibleprob.shape[0], self.n_visible))).astype(np.int32)
+		labelsprob = None
+		if self.labels is not None:
+			labels = self.sigmoid(np.dot(hidden, self.labelweights) + self.labelbias)
+			labelsprob = self.softmax(labels)
+		return visibleprob, visibleact, labelsprob
 
-	def train(self, epoch, persistent=None, display_at=50):
+	def train(self, epoch, nCD, PCD=False, display_at=50):
 		"""Train method for training RBM.
 
 		Args:
 			epoch: int. Number of training epochs.
-			persistent: vector / matrix of size (n_rows, n_hidden). Persistent
-				hidden activations to be used for PCD training.
-				n_rows is devided by user.
+			nCD: int. Number of alternating gibbs sampling steps.
+			PCD: bool. If True then use PCD training else CD training.
 		"""
 		dw = 0
 		dvb = 0
 		dhb = 0
-		for e in range(epoch):
-			hiddenp, hiddena = self.get_h_given_v(self.data)
+		dlabelw = 0
+		dlabelb = 0
 
-			positive = np.dot(hiddena.T, self.data)
+		if PCD:
+			persistent = (np.random.uniform(size=self.data.shape) > np.random.randn(*self.data.shape)).astype(np.int32)
+
+		for e in range(epoch):
+			hiddenp, hiddena = self.get_h_given_v(self.data, self.labels)
+			labelsp = self.labels
+
+			positive = np.dot(self.data.T, hiddenp)
 			positivevb = np.sum(self.data, axis=0)
 			positivehb = np.sum(hiddenp, axis=0)
 
-			if persistent is not None:
-				hiddena = persistent
+			if self.labels is not None:
+				positivelabels = np.dot(hiddenp.T, labelsp)
+				positivelabelsb = labelsp.sum(axis=0)
 
-			for step in range(self.nCD):
-				recnsp, recnsa = self.get_v_given_h(hiddena)
-				hiddenp, hiddena = self.get_h_given_v(recnsp)
+			if PCD:
+				recnsp = persistent
+				for step in range(nCD):
+					hiddenp, hiddena = self.get_h_given_v(recnsp, labelsp)
+					recnsp, recnsa, labelsp = self.get_v_given_h(hiddena)
+				persistent = recnsp
+			else:
+				for step in range(nCD):
+					recnsp, recnsa, labelsp = self.get_v_given_h(hiddena)
+					hiddenp, hiddena = self.get_h_given_v(recnsp, labelsp)
 
-			negative = np.dot(hiddenp.T, recnsp)
+			if self.labels is not None:
+				negativelabels = np.dot(hiddenp.T, labelsp)
+				negativelabelsb = labelsp.sum(axis=0)
+				dlabelw = (self.lr * (positivelabels - negativelabels) / self.data.shape[0]) - self.decay * self.labelweights + self.momentum * dlabelw
+				self.labelweights += dlabelw
+				dlabelb = (self.lr * (positivelabelsb - negativelabelsb) / self.data.shape[0]) + self.momentum * dlabelb
+				self.labelbias += dlabelb
+
+			negative = np.dot(recnsp.T, hiddenp)
 			negativevb = recnsp.sum(axis=0)
 			negativehb = hiddenp.sum(axis=0)
 
-			dw = (self.lr * ((positive - negative) / self.data.shape[0]) - self.decay * self.weights) + self.momentum * dw
+			dw = (self.lr * (positive - negative) / self.data.shape[0]) - self.decay * self.weights + self.momentum * dw
 			self.weights += dw
 			dvb = (self.lr * (positivevb - negativevb) / self.data.shape[0]) + self.momentum * dvb
 			self.v_bias += dvb
@@ -81,14 +124,19 @@ class RBM(object):
 			self.h_bias += dhb
 
 			error = np.sum((self.data - recnsa)**2) / self.data.shape[0]
-			if epoch % display_at == 0:
-				print error, self.energy(self.data, hiddenp)
+			if e % display_at == 0:
+				print error, np.mean(self.energy(self.data, hiddena, self.labels))
 
-	def energy(self, visible, hidden):
-		vb = (visible * self.v_bias).sum()
-		hb = (hidden * self.h_bias).sum()
-		vwh = (np.dot(visible, self.weights.T) * hidden).sum()
-		return - (vb + hb + vwh)
+	def energy(self, visible, hidden, labels):
+		vb = np.dot(visible, self.v_bias)
+		hb = np.dot(hidden, self.h_bias)
+		vwh = (np.dot(visible, self.weights) * hidden).sum(axis=1)
+		lbe = 0
+		if labels is not None:
+			lb = np.dot(labels, self.labelbias)
+			llwh = (np.dot(hidden, self.labelweights) * labels).sum(axis=1)
+			lbe = lb + llwh
+		return -(vb + hb + vwh + lbe)
 
 	def sample(self, n_samples, data=None):
 		samples = np.zeros((n_samples, self.n_visible))
@@ -96,9 +144,21 @@ class RBM(object):
 			data = np.random.uniform(size=(1, self.n_visible))
 
 		for i in range(n_samples):
-			hiddenp, hiddena = self.get_h_given_v(data)
-			visiblep, visiblea = self.get_v_given_h(hiddena)
+			hiddenp, hiddena = self.get_h_given_v(data, None)
+			visiblep, visiblea, labelsp = self.get_v_given_h(hiddena)
 			samples[i, :] = visiblea
 			data = visiblea
 
 		return samples
+
+	def classify(self, visible, labels, n_samples=1):
+		for i in range(n_samples):
+			hiddenp, hiddena = self.get_h_given_v(visible, labels)
+			visible, recnsa, labelsp = self.get_v_given_h(hiddena)
+		return labelsp.argmax(axis=1)
+
+	def free_energy(self, visible):
+		wx_b = np.dot(visible, self.weights) + self.h_bias
+		vbias_term = np.dot(visible, self.v_bias)
+		hidden_term = np.sum(np.log(1 + np.exp(wx_b)), axis=1)
+		return -(hidden_term + vbias_term)
