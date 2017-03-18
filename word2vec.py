@@ -89,8 +89,8 @@ class BatchGenerator(object):
 				batch_input[i*self.n_skips + k] = target
 				batch_output[i*self.n_skips + k] = labels[k]
 
-			self._cursor = (self._cursor + 1) % (len(self.data) - self.window_size)
-			words.pop(0)
+			self._cursor = (self._cursor + 1) % (len(self.data) - (2*self.window_size))
+			words = words[1:]
 			words.append(self.data[self._cursor])
 
 		return batch_input, batch_output
