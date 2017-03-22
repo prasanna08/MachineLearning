@@ -1,7 +1,8 @@
 """This is word2vec model for high quality representation of words."""
-import numpy as np
+import batch_generators
 from collections import Counter
-import tensorflow as tf
+import model
+import numpy as np
 import preprocess
 
 def read_file(file_name):
@@ -32,74 +33,10 @@ def word2id(words, vocabulary_size):
 	return word2id, id2word, count, indexed_data
 
 
-class BatchGenerator(object):
+class Word2Vec(model.SupervisedModel):
 	def __init__(
-			self, batch_size, window_size, n_skips, indexed_data,
-			skip_gram=True):
-		self.data = indexed_data
-		self.window_size = window_size
-		self.n_skips = n_skips
-		self.batch_size = batch_size
-		self._cursor = 0
-
-		if skip_gram:
-			self.next_batch = self.next_batch_skip
-		else:
-			self.next_batch = self.next_batch_cbow
-
-		# batch_size should be multiple of n_skips because each target word
-		# is present in batch for n_skips times.
-		assert batch_size % n_skips == 0
-
-	def next_batch_cbow(self):
-		batch_input = np.ndarray(
-			shape=(self.batch_size, self.n_skips), dtype=np.int32)
-		batch_output = np.ndarray(shape=(self.batch_size), dtype=np.int32)
-
-		k = 0
-		for _ in range(self.n_skips):
-			output, inp = self.next_batch_skip()
-			for i in range(0, self.batch_size, self.n_skips):
-				batch_input[k] = inp[i:i+self.n_skips]
-				batch_output[k] = output[i]
-				k += 1
-
-		return batch_input, batch_output
-
-	def next_batch_skip(self):
-		batch_input = np.ndarray(shape=(self.batch_size), dtype=np.int32)
-		batch_output = np.ndarray(shape=(self.batch_size), dtype=np.int32)
-
-		words = self.data[self._cursor: self._cursor + (2 * self.window_size) + 1]
-		#cursor = self._cursor
-		#for i in range(2 * self.window_size + 1):
-		#	words.append(self.data[cursor])
-		#	cursor = (cursor + 1) % len(self.data)
-
-		for i in range(self.batch_size // self.n_skips):
-			target = words[self.window_size]
-
-			order = range(len(words))
-			order.remove(self.window_size)
-			np.random.shuffle(order)
-			
-			labels = [words[x] for x in order[:self.n_skips]]
-			# insert data in batch_input and output arrays.
-			for k in range(self.n_skips):
-				batch_input[i*self.n_skips + k] = target
-				batch_output[i*self.n_skips + k] = labels[k]
-
-			self._cursor = (self._cursor + 1) % (len(self.data) - (2*self.window_size))
-			words = words[1:]
-			words.append(self.data[self._cursor])
-
-		return batch_input, batch_output
-
-
-class Word2Vec(object):
-	def __init__(
-			self, batch_size, window_size, n_skips, vocabulary_size,
-			embedding_dim, neg_k=64, sample_vocabulary=None):
+			self, embedding_dim, vocabulary_size, window_size, n_skips,
+			neg_k=64, sample_vocabulary=None):
 		"""Word2Vec class.
 
 		It is assumed that data provided is numerical and contains word_ids rather
@@ -112,23 +49,17 @@ class Word2Vec(object):
 		self.n_outputs = self.n_inputs
 		
 		self.window_size = window_size
-		self.batch_size = batch_size
 		self.n_skips = n_skips
 		self.vocabulary_size = vocabulary_size
 		self.neg_k = neg_k
 		self.sample_vocabulary = sample_vocabulary
 		self.sample_vocabulary_size = int(self.vocabulary_size / 5)
-		self.gen = None
 		
-		self.embeddings = preprocess.xavier_init(
-			(self.n_inputs, self.n_hidden), self.n_inputs, self.n_hidden)
-		self.softmax_w = preprocess.xavier_init(
-			(self.n_hidden, self.n_outputs), self.n_hidden, self.n_outputs)
+		self.embeddings = preprocess.xavier_init((self.n_inputs, self.n_hidden))
+		self.softmax_w = preprocess.xavier_init((self.n_hidden, self.n_outputs))
 		self.softmax_b = np.zeros(self.n_outputs)
 
-		self.previous_d_softmax_w = np.zeros(self.softmax_w.shape)
-		self.previous_d_softmax_b = np.zeros(self.softmax_b.shape)
-		self.previous_d_embeddings = np.zeros(self.embeddings.shape)
+		self.params = self.get_params()
 
 	def negative_samples(self, labels):
 		vocab = xrange(self.sample_vocabulary_size)
@@ -147,15 +78,27 @@ class Word2Vec(object):
 	def set_sample_vocabulary(self, word_counts, word2id):
 		self.sample_vocabulary = np.array([word2id[w] for w, c in word_counts[:self.sample_vocabulary_size]])
 
-	def Forward(self, data, labels):
+	def get_params(self):
+		return {
+			'embeddings': self.embeddings,
+			'softmax_w': self.softmax_w,
+			'softmax_b': self.softmax_b
+		}
+
+	def softmax(self, z):
+		ez = z - z.max()
+		ez = np.exp(ez)
+		return ez / ez.sum()
+
+	def forward(self, data, labels):
 		hidden = self.embeddings[data, :]
 
 		# Do negative sampled softmax.
-		samples = np.zeros((self.batch_size, self.neg_k), dtype=np.int32)
+		samples = np.zeros((data.shape[0], self.neg_k), dtype=np.int32)
 		samples[:, :-1] =  self.negative_samples(labels)
 		samples[:, -1] = labels
 
-		output = np.zeros((self.batch_size, self.neg_k))
+		output = np.zeros((data.shape[0], self.neg_k))
 		for i in range(data.shape[0]):
 			output[i, :] = self.softmax(np.dot(hidden[i], self.softmax_w[:, samples[i]]) + self.softmax_b[samples[i]])
 
@@ -167,7 +110,7 @@ class Word2Vec(object):
 		}
 		return cache
 
-	def Backward(self, d_out, cache):
+	def backward(self, d_out, cache):
 		hidden = cache['hidden']
 		data = cache['data']
 		samples = cache['samples']
@@ -189,67 +132,35 @@ class Word2Vec(object):
 		}
 		return d_cache
 
-	def Train(self, data, max_epochs, learning_rate, momentum):
-		# If batch generator is not present create one.
-		if self.gen is None:
-			self.word2id, self.id2word, word_counts, data = word2id(
-				data, self.vocabulary_size)
-			self.gen = BatchGenerator(
-				self.batch_size, self.window_size, self.n_skips, data)
-
-		if self.sample_vocabulary is None:
-			self.set_sample_vocabulary(word_counts, self.word2id)
-			del word_counts
-
-		# Use average loss to get a good estimation.
-		average_loss = 0
-		for epoch in xrange(max_epochs):
-			batch_input, batch_output = self.gen.next_batch()
-			cache = self.Forward(batch_input, batch_output)
-
-			samples = cache['samples']
-			# Compute output gradients.
-			d_out, loss = self.compute_output_gradient(cache['output'])
-			# Compute other parameter gradients.
-			d_cache = self.Backward(d_out, cache)
-
-			# Apply gradients to parameters.
-			d_softmax_w = self.normalize_gradient(d_cache['d_softmax_w'])
-			self.previous_d_softmax_w = momentum * self.previous_d_softmax_w - learning_rate * d_softmax_w
-			self.softmax_w = self.softmax_w + self.previous_d_softmax_w
-
-			d_softmax_b = self.normalize_gradient(d_cache['d_softmax_b'])
-			self.previous_d_softmax_b = momentum * self.previous_d_softmax_b - learning_rate * d_softmax_b
-			self.softmax_b = self.softmax_b + self.previous_d_softmax_b
-
-			d_embeddings = self.normalize_gradient(d_cache['d_embeddings'])
-			self.previous_d_embeddings = momentum * self.previous_d_embeddings - learning_rate * d_embeddings
-			self.embeddings = self.embeddings + self.previous_d_embeddings
-
-			# Normalize embeddings.
-			self.embeddings /= np.sqrt((self.embeddings ** 2).sum(axis=1)[:, np.newaxis])
-
-			average_loss += loss
-			if epoch % 100 == 0:
-				if epoch > 0:
-					loss = average_loss / 100
-				print "Epoch: %d, Error: %.6f" % (epoch, loss)
-				average_loss = 0
-
-	def softmax(self, z):
-		ez = z - z.max()
-		ez = np.exp(ez)
-		return ez / ez.sum()
-
-	def compute_output_gradient(self, outputs):
+	def compute_loss_and_gradient(self, outputs):
 		# Xentropy loss function.
 		loss = np.sum(-1 * np.log(outputs)[:, -1]) / outputs.shape[0]
-		d_out = outputs.copy()
-		d_out[:, -1] = outputs[:, -1] - 1
-		return d_out, loss	
+		dout = outputs.copy()
+		dout[:, -1] = outputs[:, -1] - 1
+		return loss, dout
 
-	def normalize_gradient(self, grad):
-		return grad / self.batch_size
+	def get_batch_generator(self, batch_size, data, labels=None):
+		self.word2id, self.id2word, word_counts, data = word2id(
+			data, self.vocabulary_size)
+		self.set_sample_vocabulary(word_counts, self.word2id)
+		return batch_generators.Word2VecBatchGenerator(
+			batch_size, data, self.window_size, self.n_skips)
+
+	def get_params_mapping(self):
+		mapper = {
+			'embeddings': ['d_embeddings', self.embeddings.shape],
+			'softmax_w': ['d_softmax_w', self.softmax_w.shape],
+			'softmax_b': ['d_softmax_b', self.softmax_b.shape]
+		}
+		return mapper
+
+	def train(self, batch_input, batch_output):
+		# Normalize embeddings.
+		self.embeddings /= np.sqrt((self.embeddings ** 2).sum(axis=1)[:, np.newaxis])
+		cache = self.forward(batch_input, batch_output)
+		loss, dout = self.compute_loss_and_gradient(cache['output'])
+		d_cache = self.backward(dout, cache)
+		return self.params, d_cache, loss
 
 	def cosine_similarity(self, word, top=10):
 		try:

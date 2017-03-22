@@ -1,10 +1,11 @@
-"""Simple paragraph 2 vector implementation.
-Work In Progress module.
-"""
-
+import batch_generators
 import numpy as np
-import word2vec
+import model
+import optimizers
 import preprocess
+import word2vec
+
+"""Simple paragraph 2 vector implementation."""
 
 def read_file(self, fname):
 	with open(fname, 'r') as f:
@@ -48,35 +49,10 @@ def id2doc(doc, id2word):
 def ids2doc(docs, id2word):
 	return [id2doc(doc, id2word) for doc in docs]
 
-class BatchGenerator(object):
-	def __init__(self, docs, batch_size, n_skips):
-		self.docs = docs
-		self.batch_size = batch_size
-		self.n_skips = n_skips
-		self._cursor = [0 for i in xrange(len(docs))]
 
-	def next_batch(self):
-		doc_indices = np.random.choice(len(self.docs), self.batch_size)
-		batch = np.ndarray(shape=(self.batch_size, self.n_skips + 2), dtype=np.int32)
-		k = 0
-		for i in doc_indices:
-			batch[k, 0] = i
-			cursor = self._cursor[i]
-			for j in xrange(self.n_skips + 1):
-				try:
-					batch[k, j+1] = self.docs[i][cursor]
-					cursor = (cursor + 1)
-				except Exception as e:
-					print cursor
-					print self.docs[i]
-			self._cursor[i] = (self._cursor[i] + 1) % (len(self.docs[i]) - self.n_skips)
-			k += 1
-		return batch[:, :-1], batch[:, -1]
-
-
-class Doc2Vec(object):
+class Doc2Vec(model.SupervisedModel):
 	def __init__(
-			self, batch_size, n_docs, doc_embedding_dim, word_embedding_dim, n_skips,
+			self, doc_embedding_dim, word_embedding_dim, n_skips,
 			window_size, vocabulary_size, neg_k, word2vec_model=None,
 			sample_vocabulary=None):
 		"""doc2vec model.
@@ -98,9 +74,6 @@ class Doc2Vec(object):
 			sample_vocabulary: list of str. Words from which samples will be
 				extracted for negative sampling.
 		"""
-
-		self.batch_size = batch_size
-		self.n_docs = n_docs
 		self.doc_embedding_dim = doc_embedding_dim
 		self.word_embedding_dim = word_embedding_dim
 		self.n_skips = n_skips
@@ -122,10 +95,6 @@ class Doc2Vec(object):
 			doc_embedding_dim + n_skips * word_embedding_dim, vocabulary_size)
 		self.softmax_b = np.zeros(vocabulary_size)
 
-		self.previous_d_softmax_w = np.zeros(self.softmax_w.shape)
-		self.previous_d_softmax_b = np.zeros(self.softmax_b.shape)
-		self.previous_d_doc_embeddings = np.zeros(self.doc_embeddings.shape)
-
 		# Parameters for pv-dbow model.
 		self.dbow_embeddings = self.total_embeddings[:, doc_embedding_dim:]
 		self.dbow_softmax_w = preprocess.xavier_init(
@@ -133,14 +102,12 @@ class Doc2Vec(object):
 			vocabulary_size)
 		self.dbow_softmax_b = np.zeros(vocabulary_size)
 
-		self.previous_d_dbow_embeddings = np.zeros(self.dbow_embeddings.shape)
-		self.previous_d_dbow_softmax_w = np.zeros(self.dbow_softmax_w.shape)
-		self.previous_d_dbow_softmax_b = np.zeros(self.dbow_softmax_b.shape)
+		self.params = self.get_params()
 
 		if word2vec_model is None:
 			self.w2v = word2vec.Word2Vec(
-				batch_size, window_size, n_skips, vocabulary_size,
-				word_embedding_dim, neg_k)
+				word_embedding_dim, vocabulary_size, window_size,
+				n_skips, neg_k)
 			self.word_embeddings = self.w2v.embeddings
 
 		else:
@@ -171,7 +138,15 @@ class Doc2Vec(object):
 		self.total_embeddings[:, :self.doc_embedding_dim] = self.doc_embeddings
 		self.total_embeddings[:, self.doc_embedding_dim:] = self.dbow_embeddings
 
-	def Forward(self, data, labels):
+	def train_word2vec(self, data, max_epochs, learning_rate):
+		data = reduce(lambda x, y: x+y, data)
+		opti = optimizers.Adam(self.w2v, 20*self.n_skips, learning_rate)
+		opti.train(data)
+		self.word2id = self.w2v.word2id
+		self.id2word = self.w2v.id2word
+		self.is_word2vec_trained = True
+
+	def forward(self, data, labels):
 		# Forward pass for pv-dm model.
 		hidden = np.zeros((data.shape[0], self.softmax_w.shape[0]))
 		hidden[:, :self.doc_embedding_dim] = self.doc_embeddings[data[:, 0], :]
@@ -203,7 +178,7 @@ class Doc2Vec(object):
 		}
 		return cache
 
-	def Backward(self, dout, dout_dbow, cache):
+	def backward(self, dout, dout_dbow, cache):
 		data = cache['data']
 		hidden = cache['hidden']
 		dbow_hidden = cache['dbow_hidden']
@@ -244,99 +219,56 @@ class Doc2Vec(object):
 		}
 		return d_cache
 
-	def compute_output_gradient(self, outputs):
+	def compute_loss_and_gradient(self, outputs):
 		# Xentropy loss function.
 		loss = np.sum(-1 * np.log(outputs)[:, -1]) / outputs.shape[0]
 		dout = outputs.copy()
 		dout[:, -1] = outputs[:, -1] - 1
-		return dout, loss
+		return loss, dout
 
-	def normalize_gradient(self, grad):
-		return grad / self.batch_size
+	def get_batch_generator(self, batch_size, data, labels=None):
+		data = docs2id(tokenize_paragraphs(data))
+		self.set_sample_vocabulary()
+		return batch_generators.Doc2VecBatchGenerator(
+			batch_size, data, self.n_skips)
 
-	def Train_word2vec(self, data, max_epochs, learning_rate, momentum):
-		data = reduce(lambda x, y: x+y, data)
-		self.w2v.Train(data, max_epochs, learning_rate, momentum)
-		self.word2id = self.w2v.word2id
-		self.id2word = self.w2v.id2word
-		self.is_word2vec_trained = True
+	def get_params_mapping(self):
+		mappings = {
+			'doc_embeddings': ['d_doc_embeddings', self.doc_embeddings.shape],
+			'softmax_w': ['d_softmax_w', self.softmax_w.shape],
+			'softmax_b': ['d_softmax_b', self.softmax_b.shape],
+			'dbow_embeddings': ['d_dbow_embeddings', self.dbow_embeddings.shape],
+			'dbow_softmax_w': ['d_dbow_softmax_w', self.dbow_softmax_w.shape],
+			'dbow_softmax_b': ['d_dbow_softmax_b', self.dbow_softmax_b.shape]
+		}
+		return mappings
 
-	def Train(
-			self, data, max_epochs, learning_rate, momentum,
-			train_word2vec=False):
-		"""Train document 2 vector model.
-		
-		Args:-
-			data: list of str. A list of documents or paragraphs.
-			max_epochs: int. Number of maximum training epochs.
-			learning_rate: float. Learning rate of optimizer.
-			momentum: float. Momentum of optimizer.
-		"""
+	def get_params(self):
+		params = {
+			'doc_embeddings': self.doc_embeddings,
+			'softmax_w': self.softmax_w,
+			'softmax_b': self.softmax_b,
+			'dbow_embeddings': self.dbow_embeddings,
+			'dbow_softmax_w': self.dbow_softmax_w,
+			'dbow_softmax_b': self.dbow_softmax_b
+		}
+		return params
+
+	def train(self, batch_input, batch_output):
+		"""Train document 2 vector model."""
 		# If word2vec model is not trained then train that first.
-		data = tokenize_paragraphs(data)
 		if (not self.is_word2vec_trained) or train_word2vec:
-			self.Train_word2vec(data, max_epochs, learning_rate, momentum)
+			self.train_word2vec(data, max_epochs, learning_rate)
 
-		# If batch generator is not present create one.
-		if self.gen is None:
-			data = docs2id(data, self.word2id)
-			self.gen = BatchGenerator(data, self.batch_size, self.n_skips)
+		# Normalize embeddings.
+		self.doc_embeddings /= np.sqrt((self.doc_embeddings ** 2).sum(axis=1)[:, np.newaxis])
+		self.dbow_embeddings /= np.sqrt((self.dbow_embeddings ** 2).sum(axis=1)[:, np.newaxis])
 
-		if self.sample_vocabulary is None:
-			self.set_sample_vocabulary()
-
-		# Use average loss to get a good estimation.
-		average_loss = 0
-		for epoch in xrange(max_epochs):
-			batch_input, batch_output = self.gen.next_batch()
-
-			# Forward pass.
-			cache = self.Forward(batch_input, batch_output)
-
-			# Compute output gradients.
-			dout, loss = self.compute_output_gradient(cache['output'])
-			dout_dbow, dbow_loss = self.compute_output_gradient(cache['dbow_output'])
-
-			# Backward pass.
-			d_cache = self.Backward(dout, dout_dbow, cache)
-
-			# Apply gradients to parameters of pv-dm model.
-			d_softmax_w = self.normalize_gradient(d_cache['d_softmax_w'])
-			self.previous_d_softmax_w = momentum * self.previous_d_softmax_w - learning_rate * d_softmax_w
-			self.softmax_w = self.softmax_w + self.previous_d_softmax_w
-
-			d_softmax_b = self.normalize_gradient(d_cache['d_softmax_b'])
-			self.previous_d_softmax_b = momentum * self.previous_d_softmax_b - learning_rate * d_softmax_b
-			self.softmax_b = self.softmax_b + self.previous_d_softmax_b
-
-			d_doc_embeddings = self.normalize_gradient(d_cache['d_doc_embeddings'])
-			self.previous_d_doc_embeddings = momentum * self.previous_d_doc_embeddings - learning_rate * d_doc_embeddings
-			self.doc_embeddings = self.doc_embeddings + self.previous_d_doc_embeddings
-
-			# Apply gradients to parameters of pv-dbow model.
-			d_dbow_softmax_w = self.normalize_gradient(d_cache['d_dbow_softmax_w'])
-			self.previous_d_dbow_softmax_w = momentum * self.previous_d_dbow_softmax_w - learning_rate * d_dbow_softmax_w
-			self.dbow_softmax_w = self.dbow_softmax_w + self.previous_d_dbow_softmax_w
-
-			d_dbow_softmax_b = self.normalize_gradient(d_cache['d_dbow_softmax_b'])
-			self.previous_d_dbow_softmax_b = momentum * self.previous_d_dbow_softmax_b - learning_rate * d_dbow_softmax_b
-			self.dbow_softmax_b = self.dbow_softmax_b + self.previous_d_dbow_softmax_b
-
-			d_dbow_embeddings = self.normalize_gradient(d_cache['d_dbow_embeddings'])
-			self.previous_d_dbow_embeddings = momentum * self.previous_d_dbow_embeddings - learning_rate * d_dbow_embeddings
-			self.dbow_embeddings = self.dbow_embeddings + self.previous_d_dbow_embeddings
-
-			# Normalize embeddings.
-			self.doc_embeddings /= np.sqrt((self.doc_embeddings ** 2).sum(axis=1)[:, np.newaxis])
-			self.dbow_embeddings /= np.sqrt((self.dbow_embeddings ** 2).sum(axis=1)[:, np.newaxis])
-
-			# Calculate average loss.
-			average_loss += (loss + dbow_loss) / 2
-			if epoch % 100 == 0:
-				if epoch > 0:
-					loss = average_loss / 100
-				print "Epoch: %d, Error: %.6f" % (epoch, loss)
-				average_loss = 0
+		cache = self.forward(batch_input, batch_output)
+		loss, dout = self.compute_loss_and_gradient(cache['output'])
+		dbow_loss, dout_dbow = self.compute_loss_and_gradient(cache['dbow_output'])
+		d_cache = self.backward(dout, dout_dbow, cache)
+		return self.params, d_cache, (loss + dbow_loss) / 2
 
 	def vectorize_paragraphs(
 			self, paragraphs, max_epochs, learning_rate, momentum):
@@ -347,15 +279,11 @@ class Doc2Vec(object):
 		"""
 		new_embeddings = preprocess.xavier_init(
 			(len(paragraphs) + self.doc_embeddings.shape[0], 
-				self.doc_embeddings.shape[1]), 
-			len(paragraphs) + self.doc_embeddings.shape[0],
-			self.doc_embeddings.shape[1])
+				self.doc_embeddings.shape[1]))
 
 		new_dbow_embeddings = preprocess.xavier_init(
 			(len(paragraphs) + self.dbow_embeddings.shape[0], 
-				self.dbow_embeddings.shape[1]), 
-			len(paragraphs) + self.dbow_embeddings.shape[0],
-			self.dbow_embeddings.shape[1])
+				self.dbow_embeddings.shape[1]))
 
 		new_embeddings[len(paragraphs):, :] = self.doc_embeddings
 		new_dbow_embeddings[len(paragraphs):, :] = self.dbow_embeddings
@@ -369,25 +297,25 @@ class Doc2Vec(object):
 		previous_d_doc_embeddings = np.zeros(new_embeddings.shape)
 		previous_d_dbow_embeddings = np.zeros(new_dbow_embeddings.shape)
 
-		gen = BatchGenerator(paragraphs, self.batch_size, self.n_skips)
+		gen = self.get_batch_generator(len(paragraphs), paragraphs)
 
 		for epoch in xrange(max_epochs):
 			# Forward pass.
 			batch_input, batch_output = gen.next_batch()
-			cache = self.Forward(batch_input, batch_output)
+			cache = self.forward(batch_input, batch_output)
 
 			# Compute output gradients.
-			dout, loss = self.compute_output_gradient(cache['output'])
-			dout_dbow, loss = self.compute_output_gradient(cache['dbow_output'])
+			loss, dout = self.compute_loss_and_gradient(cache['output'])
+			dbow_loss, dout_dbow = self.compute_loss_and_gradient(cache['dbow_output'])
 
 			# Backward pass.
-			d_cache = self.Backward(dout, dout_dbow, cache)
+			d_cache = self.backward(dout, dout_dbow, cache)
 
-			d_doc_embeddings = self.normalize_gradient(d_cache['d_doc_embeddings'])
+			d_doc_embeddings = d_cache['d_doc_embeddings'] / len(paragraphs)
 			previous_d_doc_embeddings = momentum * previous_d_doc_embeddings - learning_rate * d_doc_embeddings
 			self.doc_embeddings = self.doc_embeddings + previous_d_doc_embeddings
 
-			d_dbow_embeddings = self.normalize_gradient(d_cache['d_dbow_embeddings'])
+			d_dbow_embeddings = d_cache['d_dbow_embeddings'] / len(paragraphs)
 			previous_d_dbow_embeddings = momentum * previous_d_dbow_embeddings - learning_rate * d_dbow_embeddings
 			self.dbow_embeddings = self.dbow_embeddings + previous_d_dbow_embeddings
 
