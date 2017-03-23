@@ -1,32 +1,27 @@
-import numpy as np
 import KMeans
+import numpy as np
+import preprocess
 
-class RBF(object):
-	def __init__(self, inputs, outputs, sigma):
-		self.inputs = np.array(inputs)
-		if self.inputs.ndim == 1:
-			self.inputs = self.inputs.reshape(self.inputs.shape[0], 1)
-
-		self.outputs = np.array(outputs)
-		if self.outputs.ndim == 1:
-			self.outputs = self.outputs.reshape(self.outputs.shape[0], 1)
-
+class RBF(model.SupervisedModel):
+	def __init__(self, n_inputs, n_hidden, n_outputs, sigma):
+		self.n_inputs = n_inputs
+		self.n_hidden = n_hidden
+		self.n_outputs = n_outputs
 		self.sigma = sigma
-		self.hidden = np.zeros(self.outputs.shape)
-		self.theta = np.random.rand(self.outputs.shape[1], self.outputs.shape[1])
+		self.weights = preprocess.xavier_init((n_hidden, n_outputs))
 
-	def get_clusters_distances(self):
-		self.km = KMeans.KMeans(self.inputs, clusters=self.outputs.shape[1])
+	def get_clusters_distances(self, data):
+		self.km = KMeans.KMeans(data, clusters=self.n_hidden)
 		self.km.train()
-		clusters, distance = self.km.assign_clusters(self.inputs)
+		clusters, distance = self.km.assign_clusters(data)
 		return distance
 
-	def train(self):
-		distance = self.get_clusters_distances()
-		self.hidden = np.exp(-(distance**2)/(2*self.sigma**2))
-		self.theta = np.transpose(np.dot(np.linalg.pinv(self.hidden), self.outputs))
+	def train(self, data, labels):
+		distance = self.get_clusters_distances(data)
+		hidden = np.exp(-(distance**2)/(2*self.sigma**2))
+		self.weights = np.dot(np.linalg.pinv(hidden), labels)
 
 	def get_outputs(self, inputs):
 		_, distance = self.km.assign_clusters(inputs)
 		hidden = np.exp(-(distance**2)/(2*self.sigma**2))
-		return np.dot(hidden, self.theta.T)
+		return np.dot(hidden, self.weights)
