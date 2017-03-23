@@ -6,3 +6,4 @@
 *.pickle
 text8
 Dataset/
+im2col/
