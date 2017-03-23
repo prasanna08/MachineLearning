@@ -4,8 +4,13 @@ import model
 
 class optimizer(object):
 	__metaclass__ = abc.ABCMeta
-	def __init__(self):
+	def __init__(self, model, batch_size, learning_rate):
 		self.global_step = 0
+		self.model = model
+		self.batch_size = batch_size
+		self.learning_rate = learning_rate
+		self.params = model.get_params_mapping()
+		self.mappings = {k: v[0] for k, v in self.params.iteritems()}
 
 	def train(self, data, labels=None, max_epochs=100, display_count=10):
 		"""Minibatch training method."""
@@ -48,12 +53,7 @@ class optimizer(object):
 
 class SGDMinibatch(optimizer):
 	def __init__(self, model, batch_size, learning_rate):
-		super(SGDMinibatch, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k,v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(SGDMinibatch, self).__init__(model, batch_size, learning_rate)
 
 	def _update_params(self, params, d_params):
 		for k, v in self.mappings.iteritems():
@@ -64,12 +64,7 @@ class SGDMinibatch(optimizer):
 
 class SGDMomentum(optimizer):
 	def __init__(self, model, batch_size, learning_rate, momentum):
-		super(SGDMomentum, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k,v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(SGDMomentum, self).__init__(model, batch_size, learning_rate)
 		self.momentum = momentum
 		self.old_cache = {k: np.zeros(v[1]) for k, v in self.params.iteritems()}
 
@@ -83,12 +78,7 @@ class SGDMomentum(optimizer):
 
 class SGDNag(optimizer):
 	def __init__(self, model, batch_size, learning_rate, momentum):
-		super(SGDNag, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k,v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(SGDNag, self).__init__(model, batch_size, learning_rate)
 		self.momentum = momentum
 		self.old_cache = {k: np.zeros(v[1]) for k, v in self.params.iteritems()}
 
@@ -102,12 +92,7 @@ class SGDNag(optimizer):
 
 class Adagrad(optimizer):
 	def __init__(self, model, batch_size, learning_rate, eps=1e-6):
-		super(Adagrad, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k, v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(Adagrad, self).__init__(model, batch_size, learning_rate)
 		self.eps = eps
 		self.g2cache = {k: np.zeros(v[1]) for k, v in self.params.iteritems()}
 
@@ -122,12 +107,7 @@ class Adagrad(optimizer):
 
 class RMSProp(optimizer):
 	def __init__(self, model, batch_size, learning_rate, beta1=0.9, eps=1e-6):
-		super(RMSProp, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k, v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(RMSProp, self).__init__(model, batch_size, learning_rate)
 		self.eps = eps
 		self.beta1 = beta1
 		self.g2cache = {k: np.zeros(v[1]) for k, v in self.params.iteritems()}
@@ -145,12 +125,7 @@ class Adam(optimizer):
 	def __init__(
 			self, model, batch_size, learning_rate, beta1=0.9, beta2=0.95,
 			eps=1e-6):
-		super(Adam, self).__init__()
-		self.model = model
-		self.params = model.get_params_mapping()
-		self.mappings = {k: v[0] for k, v in self.params.iteritems()}
-		self.batch_size = batch_size
-		self.learning_rate = learning_rate
+		super(Adam, self).__init__(model, batch_size, learning_rate)
 		self.eps = eps
 		self.beta1 = beta1
 		self.beta2 = beta2
