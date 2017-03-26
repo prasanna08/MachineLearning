@@ -168,9 +168,9 @@ class VAE(model.UnsupervisedModel):
 		kl_loss = (mean**2 + dev**2 - 1 - log_var2) / 2
 
 		# Calculate total loss.
-		mean_loss = loss.sum() / loss.shape[0]
-		mean_kl_loss = kl_loss.sum() / kl_loss.shape[0]
-		total_loss = -1 * (mean_loss - mean_kl_loss)
+		total_loss = loss.sum()
+		total_kl_loss = kl_loss.sum()
+		total_loss = -1 * (total_loss - total_kl_loss)
 
 		# Calculate gradient of output.
 		dout = (y - x)

@@ -7,7 +7,7 @@ class AnnealingSchedule(object):
 	def __init__(self, initial_lr, decay_rate, decay_step):
 		self.initial_lr = initial_lr
 		self.lr = initial_lr
-		self.k = k
+		self.k = decay_rate
 		self.decay_step = decay_step
 		self.global_step = 0
 
@@ -15,6 +15,9 @@ class AnnealingSchedule(object):
 		self.global_step += 1
 		if (self.global_step % self.decay_step) == 0: self._anneal_lr()
 		return self.lr * z
+
+	def __rmul__(self, z):
+		return self.__mul__(z)
 
 	@abc.abstractmethod
 	def _anneal_lr(self):

@@ -85,8 +85,8 @@ class CAE(model.UnsupervisedModel):
 		error = np.sum((recons - X)**2)
 		grad = h * (1 - h)
 		jacob = np.dot(grad**2, (self.w_encode**2).sum(0))
-		contractive_error = np.sum(jacob) * self.contractive_factor / 2
-		error = (error + contractive_error) / (2 * X.shape[0])
+		contractive_error = np.sum(jacob) * self.contractive_factor
+		error = (error + contractive_error) / 2
 		d_recons = (recons - X) * recons * (1 - recons)
 		return error, d_recons
 

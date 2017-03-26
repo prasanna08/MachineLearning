@@ -30,14 +30,15 @@ class EncoderBatchGenerator(BatchGenerator):
 
 class FFNBatchGenerator(BatchGenerator):
 	def __init__(self, batch_size, data, labels):
-		super(FFNBatchGenerator, self).__init__(self, batch_size, data, labels)
+		super(FFNBatchGenerator, self).__init__(batch_size, data, labels)
 		self._cursor = 0
 		self.data_length = data.shape[0]
 
 	def next_batch(self):
-		batch_input = self.data[self._cursor: self._cursor+self.batch_size, :]
-		batch_outut = self.labels[self._cursor: self._cursor+self.batch_size, :]
+		batch_input = self.data[self._cursor: self._cursor+self.batch_size]
+		batch_outut = self.labels[self._cursor: self._cursor+self.batch_size]
 		self._cursor = (self._cursor + 1) % (self.data_length - self.batch_size)
+		return batch_input, batch_outut
 
 
 class Word2VecBatchGenerator(BatchGenerator):

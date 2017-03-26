@@ -134,7 +134,7 @@ class Word2Vec(model.SupervisedModel):
 
 	def compute_loss_and_gradient(self, outputs):
 		# Xentropy loss function.
-		loss = np.sum(-1 * np.log(outputs)[:, -1]) / outputs.shape[0]
+		loss = np.sum(-1 * np.log(outputs)[:, -1])
 		dout = outputs.copy()
 		dout[:, -1] = outputs[:, -1] - 1
 		return loss, dout

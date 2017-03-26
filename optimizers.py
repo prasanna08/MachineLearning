@@ -23,7 +23,7 @@ class optimizer(object):
 
 		print "Starting training"
 		for epoch in range(max_epochs):
-			average_loss = 0
+			average_loss = []
 
 			# Batch iterator.
 			for batch in range(0, len(data), self.batch_size):
@@ -38,12 +38,13 @@ class optimizer(object):
 
 				self.global_step += 1
 				self._update_params(params, d_params)
-				average_loss += loss
+				average_loss.append(loss)
 
 				if (self.global_step % display_count) == 0:
-					average_loss = average_loss / self.batch_size
+					average_loss = np.mean(average_loss) / self.batch_size
 					print "Loss at step %d is %.4f" % (self.global_step, average_loss)
 					average_loss = 0
+					count = 0
 
 	@abc.abstractmethod
 	def _update_params(self, params, d_params):
