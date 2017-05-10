@@ -102,7 +102,7 @@ class Word2VecBatchGenerator(BatchGenerator):
 
 class Doc2VecBatchGenerator(BatchGenerator):
 	def __init__(self, batch_size, data, n_skips):
-		super(Doc2VecBatchGenerator, self).__init__(batch_size, data, labels)
+		super(Doc2VecBatchGenerator, self).__init__(batch_size, data, None)
 		self.n_skips = n_skips
 		self._cursor = [0 for i in xrange(len(data))]
 

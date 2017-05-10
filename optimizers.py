@@ -22,7 +22,7 @@ class optimizer(object):
 			gen = self.model.get_batch_generator(self.batch_size, data)
 
 		print "Starting training"
-		for epoch in range(max_epochs):
+		for epoch in xrange(max_epochs):
 			average_loss = []
 
 			# Batch iterator.
@@ -43,7 +43,7 @@ class optimizer(object):
 				if (self.global_step % display_count) == 0:
 					average_loss = np.mean(average_loss) / self.batch_size
 					print "Loss at step %d is %.4f" % (self.global_step, average_loss)
-					average_loss = 0
+					average_loss = []
 					count = 0
 
 	@abc.abstractmethod

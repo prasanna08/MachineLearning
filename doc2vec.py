@@ -52,7 +52,7 @@ def ids2doc(docs, id2word):
 
 class Doc2Vec(model.SupervisedModel):
 	def __init__(
-			self, doc_embedding_dim, word_embedding_dim, n_skips,
+			self, n_docs, doc_embedding_dim, word_embedding_dim, n_skips,
 			window_size, vocabulary_size, neg_k, word2vec_model=None,
 			sample_vocabulary=None):
 		"""doc2vec model.
@@ -83,23 +83,22 @@ class Doc2Vec(model.SupervisedModel):
 		self.is_word2vec_trained = False
 		self.gen = None
 		self.sample_vocabulary = sample_vocabulary
+		self.n_docs = n_docs
 
 		self.total_embeddings = preprocess.xavier_init(
-			(n_docs, 2 * doc_embedding_dim), n_docs, 2 * doc_embedding_dim)
+			(n_docs, 2 * doc_embedding_dim))
 
 		# Parameters for pv-dm model.
 		self.doc_embeddings = self.total_embeddings[:, :doc_embedding_dim]
 		self.softmax_w = preprocess.xavier_init((
 			doc_embedding_dim + n_skips * word_embedding_dim,
-				vocabulary_size),
-			doc_embedding_dim + n_skips * word_embedding_dim, vocabulary_size)
+				vocabulary_size))
 		self.softmax_b = np.zeros(vocabulary_size)
 
 		# Parameters for pv-dbow model.
 		self.dbow_embeddings = self.total_embeddings[:, doc_embedding_dim:]
 		self.dbow_softmax_w = preprocess.xavier_init(
-			(doc_embedding_dim, vocabulary_size), doc_embedding_dim,
-			vocabulary_size)
+			(doc_embedding_dim, vocabulary_size))
 		self.dbow_softmax_b = np.zeros(vocabulary_size)
 
 		self.params = self.get_params()
@@ -139,9 +138,8 @@ class Doc2Vec(model.SupervisedModel):
 		self.total_embeddings[:, self.doc_embedding_dim:] = self.dbow_embeddings
 
 	def train_word2vec(self, data, max_epochs, learning_rate):
-		data = reduce(lambda x, y: x+y, data)
 		opti = optimizers.Adam(self.w2v, 20*self.n_skips, learning_rate)
-		opti.train(data)
+		opti.train(self.data)
 		self.word2id = self.w2v.word2id
 		self.id2word = self.w2v.id2word
 		self.is_word2vec_trained = True
@@ -227,7 +225,9 @@ class Doc2Vec(model.SupervisedModel):
 		return loss, dout
 
 	def get_batch_generator(self, batch_size, data, labels=None):
-		data = docs2id(tokenize_paragraphs(data))
+		self.data = reduce(lambda x, y: x+y, data)
+		w2i, _, _, _ = word2vec.word2id(data, self.vocabulary_size)
+		data = docs2id(tokenize_paragraphs(data), w2i)
 		self.set_sample_vocabulary()
 		return batch_generators.Doc2VecBatchGenerator(
 			batch_size, data, self.n_skips)
@@ -258,7 +258,7 @@ class Doc2Vec(model.SupervisedModel):
 		"""Train document 2 vector model."""
 		# If word2vec model is not trained then train that first.
 		if (not self.is_word2vec_trained) or train_word2vec:
-			self.train_word2vec(data, max_epochs, learning_rate)
+			self.train_word2vec(max_epochs, learning_rate)
 
 		# Normalize embeddings.
 		self.doc_embeddings /= np.sqrt((self.doc_embeddings ** 2).sum(axis=1)[:, np.newaxis])
